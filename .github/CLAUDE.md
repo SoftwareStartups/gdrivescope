@@ -21,6 +21,26 @@ for repo in actions/checkout actions/upload-artifact actions/download-artifact a
 done
 ```
 
+## Shell Injection Prevention
+
+Never interpolate GitHub context variables directly in `run:` scripts — always route them through `env:` first. Attacker-controlled values like branch names, PR titles, issue bodies, or commit messages can contain shell metacharacters that break out of the string and execute arbitrary code in the runner.
+
+Bad:
+
+```yaml
+- run: echo "${{ github.event.pull_request.title }}"
+```
+
+Good:
+
+```yaml
+- env:
+    PR_TITLE: ${{ github.event.pull_request.title }}
+  run: echo "$PR_TITLE"
+```
+
+Applies to **every** `${{ }}` expression used inside a `run:` block — `github.ref_name`, `github.head_ref`, `github.sha`, `github.repository`, `github.actor`, `inputs.*`, and anything derived from them. The `env:` indirection forces the value through shell variable expansion, which is safe.
+
 ## CI Workflow (`workflows/ci.yml`)
 
 - Triggers: push to any branch, PRs to `main`
