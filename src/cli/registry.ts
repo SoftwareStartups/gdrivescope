@@ -1,5 +1,6 @@
 import type { ApiResponse } from '../models/api-response.js';
 import { emit } from '../formatters/output.js';
+import * as indexCmd from './commands/index.js';
 import * as loginCmd from './commands/login.js';
 import * as logoutCmd from './commands/logout.js';
 
@@ -47,6 +48,14 @@ export const registry: Record<string, Record<string, Command>> = {
       logoutCmd.HELP,
       () => logoutCmd.run(),
       logoutCmd.render
+    ),
+  },
+  index: {
+    _: wrap<indexCmd.IndexData, indexCmd.IndexFlags>(
+      'Build or refresh the persistent Drive graph',
+      indexCmd.HELP,
+      indexCmd.run,
+      indexCmd.render
     ),
   },
 };

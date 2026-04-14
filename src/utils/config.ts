@@ -16,3 +16,9 @@ export async function ensureConfigDir(): Promise<string> {
   await mkdir(dir, { recursive: true });
   return dir;
 }
+
+export function getDbPath(): string {
+  const override = Bun.env.GDRIVESCOPE_DB;
+  if (override) return override;
+  return join(configDir(), 'drive.db');
+}

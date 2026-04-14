@@ -14,6 +14,7 @@ Usage:
 Commands:
   login            Authorize with Google Drive (OAuth loopback + PKCE)
   logout           Clear stored credentials
+  index            Build or refresh the persistent Drive graph
 
 Global options:
   --help, -h       Show this message
@@ -30,6 +31,9 @@ export async function main(argv: string[]): Promise<number> {
       json: { type: 'boolean' },
       'client-id': { type: 'string' },
       'client-secret': { type: 'string' },
+      scope: { type: 'string' },
+      'metadata-only': { type: 'boolean' },
+      concurrency: { type: 'string' },
     },
     allowPositionals: true,
     strict: false,
