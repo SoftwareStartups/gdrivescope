@@ -1,3 +1,7 @@
-// Shared bun:test preload. Extend with global fixtures / env setup as the
-// test suite grows. Kept intentionally minimal for the scaffolding stage.
-export {};
+import { afterEach } from 'bun:test';
+
+// Some tests deliberately set process.exitCode via emit(fail(...)). If we don't
+// reset it, a clean test run ends with bun test itself exiting non-zero.
+afterEach(() => {
+  process.exitCode = 0;
+});
