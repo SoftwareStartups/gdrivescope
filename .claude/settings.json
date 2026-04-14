@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Skill(commit-commands:commit)",
+      "Bash(task --list *)",
+      "Bash(task lint *)",
+      "Bash(task format *)",
+      "Bash(task check *)",
+      "Bash(task typecheck *)",
+      "Bash(task test *)",
+      "Bash(task build *)",
+      "Bash(task ci *)",
+      "Bash(task compile *)",
+      "Bash(bun test *)"
+    ]
+  }
+}

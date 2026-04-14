@@ -1,0 +1,80 @@
+version: "3"
+
+tasks:
+  install:
+    desc: Install dependencies
+    cmd: bun install
+
+  build:
+    desc: Build TypeScript
+    cmds:
+      - bun run build
+
+  clean:
+    desc: Remove build artifacts
+    cmd: rm -rf build/ dist/
+
+  format:
+    desc: Format with Biome
+    cmds:
+      - bun run format
+
+  format:check:
+    desc: Check formatting
+    cmds:
+      - bun run format:check
+
+  lint:
+    desc: Lint with Biome
+    cmds:
+      - bun run lint
+
+  typecheck:
+    desc: Type-check with TypeScript
+    cmds:
+      - bun run typecheck
+
+  test:
+    desc: Run tests
+    cmds:
+      - bun test
+
+  check:
+    desc: Run lint, typecheck, and tests
+    deps: [lint, typecheck]
+    cmds:
+      - task: test
+
+  compile:
+    desc: Compile to standalone binary
+    cmds:
+      - mkdir -p dist
+      - bun build src/index.ts --compile --outfile dist/gdrivescope
+
+  compile:all:
+    desc: Compile for all platforms
+    cmds:
+      - mkdir -p dist
+      - bun build src/index.ts --compile --target=bun-linux-x64 --outfile dist/gdrivescope-linux-x64
+      - bun build src/index.ts --compile --target=bun-linux-arm64 --outfile dist/gdrivescope-linux-arm64
+      - bun build src/index.ts --compile --target=bun-darwin-x64 --outfile dist/gdrivescope-darwin-x64
+      - bun build src/index.ts --compile --target=bun-darwin-arm64 --outfile dist/gdrivescope-darwin-arm64
+      - bun build src/index.ts --compile --target=bun-windows-x64 --outfile dist/gdrivescope-windows-x64.exe
+      - bun build src/index.ts --compile --target=bun-windows-arm64 --outfile dist/gdrivescope-windows-arm64.exe
+
+  ci:
+    desc: Run full CI pipeline locally
+    cmds:
+      - task: clean
+      - task: install
+      - task: format:check
+      - task: check
+      - task: build
+
+  all:
+    desc: Run full build pipeline
+    cmds:
+      - task: clean
+      - task: install
+      - task: build
+      - task: check
