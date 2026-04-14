@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { resetVaultCache } from '../../src/auth/keychain.js';
 import { main } from '../../src/index.js';
 
 describe('main dispatcher', () => {
@@ -108,6 +109,7 @@ describe('main dispatcher', () => {
   });
 
   test('login with no creds, no TTY, returns AUTH_REQUIRED envelope', async () => {
+    resetVaultCache();
     const getSpy = spyOn(Bun.secrets, 'get').mockResolvedValue(null);
     const origId = Bun.env.GOOGLE_OAUTH_CLIENT_ID;
     const origSecret = Bun.env.GOOGLE_OAUTH_CLIENT_SECRET;

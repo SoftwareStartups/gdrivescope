@@ -36,7 +36,6 @@
       "!dist",
       "!*.tsbuildinfo",
       "!resources",
-      "!lumoqa",
       "!docs",
       "!scripts/spikes/fixtures",
       "!scripts/patches/kreuzberg-wasm-bundler"

@@ -1,7 +1,7 @@
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
-import { authorize, SCOPE_METADATA } from '../../auth/oauth.js';
-import { setAuth, setStoredClientCredentials } from '../../auth/keychain.js';
+import { SCOPE_METADATA, authorize } from '../../auth/oauth.js';
+import { setVault } from '../../auth/keychain.js';
 import { resolveClientCredentials } from '../../auth/credentials.js';
 import { toResponse } from '../../utils/errors.js';
 
@@ -17,8 +17,9 @@ export interface LoginData {
 export const HELP = `gdrivescope login — Authorize with Google Drive
 
 Runs a loopback OAuth 2.0 + PKCE flow: opens your browser, asks you to grant
-read-only Drive metadata access, then stores the refresh token in the OS
-keychain (service: com.softwarestartups.gdrivescope).
+read-only Drive metadata access, then stores the refresh token and client
+credentials together in a single OS keychain entry (service:
+com.softwarestartups.gdrivescope, key: gdrivescope.vault).
 
 Usage:
   gdrivescope login [--client-id <id>] [--client-secret <secret>] [--json]
@@ -34,10 +35,9 @@ Credential resolution (in order):
   3. OS keychain (populated by a previous login)
   4. Interactive hidden-input prompt (TTY only)
 
-After a successful login both values are cached in the OS keychain, so
-subsequent runs and token refreshes don't need to re-enter them. Create a
-Desktop OAuth client at https://console.cloud.google.com/apis/credentials
-to obtain client id and secret.
+Create a Desktop OAuth client at
+https://console.cloud.google.com/apis/credentials to obtain a client id and
+secret.
 `;
 
 export async function run(flags: LoginFlags): Promise<ApiResponse<LoginData>> {
@@ -49,16 +49,14 @@ export async function run(flags: LoginFlags): Promise<ApiResponse<LoginData>> {
       },
       interactive: true,
     });
-    await setStoredClientCredentials(
-      credentials.clientId,
-      credentials.clientSecret
-    );
     const result = await authorize(SCOPE_METADATA, credentials);
     const scope = result.scope || SCOPE_METADATA;
-    await setAuth({
+    await setVault({
       refreshToken: result.refreshToken,
       scope,
       obtainedAt: Date.now(),
+      clientId: credentials.clientId,
+      clientSecret: credentials.clientSecret,
     });
     return success({ scope });
   } catch (err) {

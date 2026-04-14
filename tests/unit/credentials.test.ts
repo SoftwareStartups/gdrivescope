@@ -1,6 +1,19 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { resolveClientCredentials } from '../../src/auth/credentials.js';
+import { resetVaultCache, type Vault } from '../../src/auth/keychain.js';
 import { CliError } from '../../src/utils/errors.js';
+
+function vaultJson(overrides: Partial<Vault> = {}): string {
+  const vault: Vault = {
+    refreshToken: 'rt',
+    scope: 'scope',
+    obtainedAt: 0,
+    clientId: 'keychain-val',
+    clientSecret: 'keychain-val',
+    ...overrides,
+  };
+  return JSON.stringify(vault);
+}
 
 describe('resolveClientCredentials', () => {
   let getSpy: ReturnType<typeof spyOn>;
@@ -11,10 +24,12 @@ describe('resolveClientCredentials', () => {
     getSpy = spyOn(Bun.secrets, 'get');
     delete Bun.env.GOOGLE_OAUTH_CLIENT_ID;
     delete Bun.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    resetVaultCache();
   });
 
   afterEach(() => {
     getSpy.mockRestore();
+    resetVaultCache();
     if (ORIG_ID !== undefined) Bun.env.GOOGLE_OAUTH_CLIENT_ID = ORIG_ID;
     if (ORIG_SECRET !== undefined)
       Bun.env.GOOGLE_OAUTH_CLIENT_SECRET = ORIG_SECRET;
@@ -27,7 +42,7 @@ describe('resolveClientCredentials', () => {
   test('flags win over env and keychain', async () => {
     Bun.env.GOOGLE_OAUTH_CLIENT_ID = 'env-id';
     Bun.env.GOOGLE_OAUTH_CLIENT_SECRET = 'env-secret';
-    getSpy.mockResolvedValue('keychain-val');
+    getSpy.mockResolvedValue(vaultJson());
     const result = await resolveClientCredentials(
       {
         flags: { clientId: 'flag-id', clientSecret: 'flag-secret' },
@@ -44,7 +59,7 @@ describe('resolveClientCredentials', () => {
   test('env wins over keychain', async () => {
     Bun.env.GOOGLE_OAUTH_CLIENT_ID = 'env-id';
     Bun.env.GOOGLE_OAUTH_CLIENT_SECRET = 'env-secret';
-    getSpy.mockResolvedValue('keychain-val');
+    getSpy.mockResolvedValue(vaultJson());
     const result = await resolveClientCredentials(
       { flags: {}, interactive: false },
       neverPrompt
@@ -56,7 +71,9 @@ describe('resolveClientCredentials', () => {
   });
 
   test('keychain used when flags and env absent', async () => {
-    getSpy.mockResolvedValue('keychain-val');
+    getSpy.mockResolvedValue(
+      vaultJson({ clientId: 'keychain-val', clientSecret: 'keychain-val' })
+    );
     const result = await resolveClientCredentials(
       { flags: {}, interactive: false },
       neverPrompt
