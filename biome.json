@@ -29,6 +29,16 @@
     }
   },
   "files": {
-    "includes": ["**", "!node_modules", "!build", "!dist", "!*.tsbuildinfo"]
+    "includes": [
+      "**",
+      "!node_modules",
+      "!build",
+      "!dist",
+      "!*.tsbuildinfo",
+      "!resources",
+      "!docs",
+      "!scripts/spikes/fixtures",
+      "!scripts/patches/kreuzberg-wasm-bundler"
+    ]
   }
 }

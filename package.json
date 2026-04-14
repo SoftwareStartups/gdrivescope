@@ -1,0 +1,64 @@
+{
+  "name": "@softwarestartups/gdrivescope",
+  "version": "0.0.0",
+  "description": "Bun-native TypeScript CLI for indexing, searching, and downloading Google Drive",
+  "private": true,
+  "type": "module",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "bin": {
+    "gdrivescope": "build/index.js"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "!build/**/*.map"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "bun run build/index.js",
+    "format": "bunx biome format --write .",
+    "format:check": "bunx biome format .",
+    "lint": "bunx biome lint .",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "test": "bun test",
+    "postinstall": "bun run scripts/patches/apply-kreuzberg-wasm-bundler.ts",
+    "prepare": "lefthook install || true"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SoftwareStartups/gdrivescope.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SoftwareStartups/gdrivescope/issues"
+  },
+  "homepage": "https://github.com/SoftwareStartups/gdrivescope#readme",
+  "keywords": [
+    "google-drive",
+    "cli",
+    "semantic-search",
+    "ai",
+    "bun",
+    "typescript"
+  ],
+  "author": "SoftwareStartups",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@googleapis/drive": "latest",
+    "@kreuzberg/node": "latest",
+    "@kreuzberg/wasm": "^4.8.5",
+    "google-auth-library": "latest",
+    "graphology": "^0.26.0",
+    "graphology-operators": "latest",
+    "graphology-traversal": "latest",
+    "openai": "latest",
+    "sqlite-vec": "latest"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.10",
+    "@types/bun": "latest",
+    "lefthook": "2.1.5",
+    "typescript": "6.0.2"
+  }
+}
