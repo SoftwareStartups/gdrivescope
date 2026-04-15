@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { openStore } from '../../src/graph/store.js';
 import type { DriveNodeInput } from '../../src/graph/model.js';
+import { openStore } from '../../src/graph/store.js';
 
 function makeNode(
   overrides: Partial<DriveNodeInput> & Pick<DriveNodeInput, 'id'>
@@ -24,7 +24,7 @@ describe('openStore', () => {
   test('stamps schema_version on first open', () => {
     const store = openStore(':memory:');
     try {
-      expect(store.getMeta('schema_version')).toBe('2');
+      expect(store.getMeta('schema_version')).toBe('3');
     } finally {
       store.close();
     }

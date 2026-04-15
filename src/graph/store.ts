@@ -8,6 +8,14 @@ export interface RootSummary {
   count: number;
 }
 
+export interface SummaryUpdate {
+  summary: string;
+  classification: string;
+  keyTopics: string;
+  extractedMd: string;
+  contentHash: string;
+}
+
 export interface Store {
   db: Database;
   upsertNode(node: DriveNodeInput): void;
@@ -18,10 +26,12 @@ export interface Store {
   listRoots(): RootSummary[];
   setMeta(key: string, value: string): void;
   getMeta(key: string): string | null;
+  updateSummary(id: string, patch: SummaryUpdate): void;
+  recordError(id: string, message: string): void;
   close(): void;
 }
 
-export const SCHEMA_VERSION = '2';
+export const SCHEMA_VERSION = '3';
 
 interface NodeRow {
   id: string;
@@ -40,6 +50,7 @@ interface NodeRow {
   extracted_md: string | null;
   content_hash: string | null;
   last_indexed: string | null;
+  last_error: string | null;
 }
 
 interface RootSummaryRow {
@@ -73,6 +84,7 @@ function rowToNode(row: NodeRow): Node {
     extractedMd: row.extracted_md,
     contentHash: row.content_hash,
     lastIndexed: row.last_indexed,
+    lastError: row.last_error,
   };
 }
 
@@ -115,11 +127,15 @@ export function openStore(path: string): Store {
       key_topics     TEXT,
       extracted_md   TEXT,
       content_hash   TEXT,
-      last_indexed   TEXT
+      last_indexed   TEXT,
+      last_error     TEXT
     );
   `);
   if (!hasColumn(db, 'nodes', 'root_id')) {
     db.exec('ALTER TABLE nodes ADD COLUMN root_id TEXT');
+  }
+  if (!hasColumn(db, 'nodes', 'last_error')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN last_error TEXT');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name)');
@@ -159,6 +175,20 @@ export function openStore(path: string): Store {
     'INSERT INTO meta(k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v'
   );
   const getMetaStmt = db.prepare('SELECT v FROM meta WHERE k = ?');
+  const updateSummaryStmt = db.prepare(`
+    UPDATE nodes SET
+      summary        = ?,
+      classification = ?,
+      key_topics     = ?,
+      extracted_md   = ?,
+      content_hash   = ?,
+      last_error     = NULL,
+      last_indexed   = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE id = ?
+  `);
+  const recordErrorStmt = db.prepare(
+    'UPDATE nodes SET last_error = ? WHERE id = ?'
+  );
 
   const existing = getMetaStmt.get('schema_version') as MetaRow | null;
   if (!existing) {
@@ -212,6 +242,19 @@ export function openStore(path: string): Store {
     getMeta(key: string): string | null {
       const row = getMetaStmt.get(key) as MetaRow | null;
       return row ? row.v : null;
+    },
+    updateSummary(id: string, patch: SummaryUpdate): void {
+      updateSummaryStmt.run(
+        patch.summary,
+        patch.classification,
+        patch.keyTopics,
+        patch.extractedMd,
+        patch.contentHash,
+        id
+      );
+    },
+    recordError(id: string, message: string): void {
+      recordErrorStmt.run(message, id);
     },
     close(): void {
       db.close();

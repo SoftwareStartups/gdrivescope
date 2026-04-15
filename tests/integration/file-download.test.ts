@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type { drive_v3 } from '@googleapis/drive';
 import {
-  EXPORT_MIME_MAP,
   downloadToFile,
+  EXPORT_MIME_MAP,
   resolveExport,
 } from '../../src/drive/download.js';
 import { CliError } from '../../src/utils/errors.js';

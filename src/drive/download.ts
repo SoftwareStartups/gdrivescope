@@ -1,7 +1,7 @@
-import type { drive_v3 } from '@googleapis/drive';
 import { createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import type { drive_v3 } from '@googleapis/drive';
 import { CliError } from '../utils/errors.js';
 
 export interface ExportTarget {
@@ -31,8 +31,34 @@ export const EXPORT_MIME_MAP: Record<string, ExportTarget> = {
   },
 };
 
-export function resolveExport(mime: string): ExportTarget | null {
-  return EXPORT_MIME_MAP[mime] ?? null;
+// Text-first export profile for the index pipeline. Google exports Docs/Slides
+// to plain text and Sheets to CSV server-side, skipping Kreuzberg entirely and
+// dropping bandwidth ~10× vs the Office-byte profile. Drawings still export as
+// PDF because Google has no text export path for them.
+export const TEXT_EXPORT_MIME_MAP: Record<string, ExportTarget> = {
+  'application/vnd.google-apps.document': {
+    targetMime: 'text/plain',
+    extension: '.txt',
+  },
+  'application/vnd.google-apps.spreadsheet': {
+    targetMime: 'text/csv',
+    extension: '.csv',
+  },
+  'application/vnd.google-apps.presentation': {
+    targetMime: 'text/plain',
+    extension: '.txt',
+  },
+  'application/vnd.google-apps.drawing': {
+    targetMime: 'application/pdf',
+    extension: '.pdf',
+  },
+};
+
+export function resolveExport(
+  mime: string,
+  map: Record<string, ExportTarget> = EXPORT_MIME_MAP
+): ExportTarget | null {
+  return map[mime] ?? null;
 }
 
 export interface DownloadTargetFile {
@@ -56,10 +82,11 @@ export async function downloadToFile(
   client: drive_v3.Drive,
   file: DownloadTargetFile,
   destPath: string,
-  format: 'auto' | 'raw' = 'auto'
+  format: 'auto' | 'raw' = 'auto',
+  exportMap: Record<string, ExportTarget> = EXPORT_MIME_MAP
 ): Promise<DownloadResult> {
   const exportTarget =
-    format === 'auto' ? (EXPORT_MIME_MAP[file.mimeType] ?? null) : null;
+    format === 'auto' ? (exportMap[file.mimeType] ?? null) : null;
 
   if (
     !exportTarget &&

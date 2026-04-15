@@ -30,6 +30,7 @@ export interface Node {
   extractedMd: string | null;
   contentHash: string | null;
   lastIndexed: string | null;
+  lastError: string | null;
 }
 
 export type EdgeAttrs = Record<string, never>;
