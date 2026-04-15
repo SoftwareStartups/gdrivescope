@@ -1,7 +1,10 @@
 import { Database, type Statement } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import * as sqliteVec from 'sqlite-vec';
+import { CliError } from '../utils/errors.js';
 import type { DriveNodeInput, Node } from './model.js';
+import { ensureExtensionCapableSqlite } from './sqlite-native.js';
 
 export interface RootSummary {
   rootId: string | null;
@@ -16,6 +19,10 @@ export interface SummaryUpdate {
   contentHash: string;
 }
 
+export interface InitVectorTableOptions {
+  rebuild?: boolean;
+}
+
 export interface Store {
   db: Database;
   upsertNode(node: DriveNodeInput): void;
@@ -28,6 +35,10 @@ export interface Store {
   getMeta(key: string): string | null;
   updateSummary(id: string, patch: SummaryUpdate): void;
   recordError(id: string, message: string): void;
+  initVectorTable(dimensions: number, opts?: InitVectorTableOptions): void;
+  upsertEmbedding(nodeId: string, vector: Float32Array): void;
+  clearEmbeddings(): void;
+  hasVectorTable(): boolean;
   close(): void;
 }
 
@@ -100,7 +111,17 @@ export function openStore(path: string): Store {
   if (path !== ':memory:') {
     mkdirSync(dirname(path), { recursive: true });
   }
+  ensureExtensionCapableSqlite();
   const db = new Database(path, { create: true });
+  try {
+    sqliteVec.load(db);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new CliError(
+      `Failed to load sqlite-vec extension: ${msg}. Install a build of SQLite with extension support (macOS: brew install sqlite; Linux: libsqlite3.so.0) or set GDRIVESCOPE_SQLITE_LIB to a capable libsqlite path.`,
+      'VEC_EXTENSION_FAILED'
+    );
+  }
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
 
@@ -197,6 +218,63 @@ export function openStore(path: string): Store {
     setMetaStmt.run('schema_version', SCHEMA_VERSION);
   }
 
+  // vec0 virtual tables do not support `INSERT ... ON CONFLICT`, so upsert
+  // is implemented as DELETE + INSERT. Statements are prepared lazily
+  // because they bind against a virtual table that may not exist yet.
+  let deleteEmbeddingStmt: Statement | null = null;
+  let insertEmbeddingStmt: Statement | null = null;
+  const deleteEmbeddingDimsMeta = db.prepare(
+    "DELETE FROM meta WHERE k = 'embedding_dims'"
+  );
+
+  function hasVec(): boolean {
+    const row = getMetaStmt.get('embedding_dims') as MetaRow | null;
+    return row !== null;
+  }
+
+  function resetEmbeddingStmts(): void {
+    deleteEmbeddingStmt = null;
+    insertEmbeddingStmt = null;
+  }
+
+  function initVec(dims: number, opts?: InitVectorTableOptions): void {
+    if (opts?.rebuild) {
+      db.exec('DROP TABLE IF EXISTS embeddings');
+      deleteEmbeddingDimsMeta.run();
+      resetEmbeddingStmts();
+    }
+    const row = getMetaStmt.get('embedding_dims') as MetaRow | null;
+    if (row) {
+      if (row.v === String(dims)) return;
+      throw new CliError(
+        `Store has ${row.v}-dim vectors, provider is ${dims}-dim. Re-run with --rebuild-embeddings or match the original provider.`,
+        'EMBEDDING_DIM_MISMATCH'
+      );
+    }
+    db.exec(
+      `CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(node_id TEXT PRIMARY KEY, embedding FLOAT[${dims}] distance_metric=cosine)`
+    );
+    setMetaStmt.run('embedding_dims', String(dims));
+  }
+
+  function getDeleteEmbeddingStmt(): Statement {
+    if (!deleteEmbeddingStmt) {
+      deleteEmbeddingStmt = db.prepare(
+        'DELETE FROM embeddings WHERE node_id = ?'
+      );
+    }
+    return deleteEmbeddingStmt;
+  }
+
+  function getInsertEmbeddingStmt(): Statement {
+    if (!insertEmbeddingStmt) {
+      insertEmbeddingStmt = db.prepare(
+        'INSERT INTO embeddings(node_id, embedding) VALUES (?, ?)'
+      );
+    }
+    return insertEmbeddingStmt;
+  }
+
   return {
     db,
     upsertNode(node: DriveNodeInput): void {
@@ -255,6 +333,26 @@ export function openStore(path: string): Store {
     },
     recordError(id: string, message: string): void {
       recordErrorStmt.run(message, id);
+    },
+    initVectorTable(dimensions: number, opts?: InitVectorTableOptions): void {
+      initVec(dimensions, opts);
+    },
+    upsertEmbedding(nodeId: string, vector: Float32Array): void {
+      const bytes = new Uint8Array(
+        vector.buffer,
+        vector.byteOffset,
+        vector.byteLength
+      );
+      getDeleteEmbeddingStmt().run(nodeId);
+      getInsertEmbeddingStmt().run(nodeId, bytes);
+    },
+    clearEmbeddings(): void {
+      db.exec('DROP TABLE IF EXISTS embeddings');
+      deleteEmbeddingDimsMeta.run();
+      resetEmbeddingStmts();
+    },
+    hasVectorTable(): boolean {
+      return hasVec();
     },
     close(): void {
       db.close();

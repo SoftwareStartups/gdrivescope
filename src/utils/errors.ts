@@ -19,6 +19,10 @@ export type ErrorCode =
   | 'PROVIDER_UNAVAILABLE'
   | 'LLM_CALL_FAILED'
   | 'LLM_MALFORMED_OUTPUT'
+  | 'EMBED_CALL_FAILED'
+  | 'EMBEDDING_DIM_MISMATCH'
+  | 'NO_EMBEDDINGS'
+  | 'VEC_EXTENSION_FAILED'
   | 'UNKNOWN';
 
 export class CliError extends Error {

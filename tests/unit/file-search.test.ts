@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from '../../src/cli/commands/file-search.js';
 import { openStore } from '../../src/graph/store.js';
+import { FakeEmbeddingProvider } from '../helpers/fakeEmbedding.js';
 import { nodeInput } from '../helpers/makeStore.js';
 
 describe('file search command', () => {
@@ -86,11 +87,51 @@ describe('file search command', () => {
     expect(response.code).toBe('MISSING_ARG');
   });
 
-  test('--threshold returns NOT_YET_IMPLEMENTED without touching the store', async () => {
-    const response = await run({ _positional: 'report', threshold: '0.5' });
+  test('--mode semantic without embeddings → NO_EMBEDDINGS', async () => {
+    const response = await run({ _positional: 'report', mode: 'semantic' });
     expect(response.ok).toBe(false);
     if (response.ok) return;
-    expect(response.code).toBe('NOT_YET_IMPLEMENTED');
+    expect(response.code).toBe('NO_EMBEDDINGS');
+  });
+
+  test('name mode is used automatically when no embeddings exist', async () => {
+    const response = await run({ _positional: 'report' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.mode).toBe('name');
+  });
+
+  test('auto-dispatches to semantic when embeddings exist', async () => {
+    // Seed vectors so hasVectorTable() returns true and the resolver is
+    // reached. The resolver will then fail with PROVIDER_UNCONFIGURED
+    // because no API key is set — the important assertion here is the
+    // *dispatch*, not the outcome.
+    const provider = new FakeEmbeddingProvider(8);
+    const store = openStore(dbPath);
+    try {
+      store.initVectorTable(provider.dimensions);
+      const vec = (await provider.embed(['seed']))[0] ?? [];
+      store.upsertEmbedding('r1', new Float32Array(vec));
+    } finally {
+      store.close();
+    }
+
+    const savedOpenai = Bun.env.OPENAI_API_KEY;
+    const savedProvider = Bun.env.GDRIVESCOPE_EMBEDDING_PROVIDER;
+    delete Bun.env.OPENAI_API_KEY;
+    delete Bun.env.GDRIVESCOPE_EMBEDDING_PROVIDER;
+    try {
+      const response = await run({ _positional: 'report' });
+      expect(response.ok).toBe(false);
+      if (response.ok) return;
+      // Dispatch reached the resolver, which threw PROVIDER_UNCONFIGURED.
+      expect(response.code).toBe('PROVIDER_UNCONFIGURED');
+    } finally {
+      if (savedOpenai !== undefined) Bun.env.OPENAI_API_KEY = savedOpenai;
+      if (savedProvider !== undefined) {
+        Bun.env.GDRIVESCOPE_EMBEDDING_PROVIDER = savedProvider;
+      }
+    }
   });
 
   test('--classification yields zero hits when none are set', async () => {

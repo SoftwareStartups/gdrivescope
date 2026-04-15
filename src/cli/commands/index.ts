@@ -8,6 +8,7 @@ import {
 import { resolveAncestry } from '../../drive/ancestry.js';
 import { createDriveClient } from '../../drive/client.js';
 import { openStore } from '../../graph/store.js';
+import { resolveEmbeddingProvider } from '../../llm/embedding-resolver.js';
 import { resolveLlmProvider } from '../../llm/resolver.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
@@ -23,6 +24,8 @@ export interface IndexFlags {
   'metadata-only'?: boolean;
   concurrency?: string;
   provider?: string;
+  'embedding-provider'?: string;
+  'rebuild-embeddings'?: boolean;
   'max-size'?: string;
   'max-pdf-pages'?: string;
 }
@@ -38,6 +41,7 @@ export interface IndexData {
   files: number;
   extracted: number;
   summarized: number;
+  embedded: number;
   skipped: number;
   errors: number;
   usedFallback: boolean;
@@ -67,22 +71,26 @@ Usage:
   gdrivescope index [options]
 
 Options:
-  --scope <FOLDER_ID>        Start folder id or alias (default: \`root\`)
-  --root <FOLDER_ID>         One-shot root override (bypasses config.toml)
-  --add-root                 Persist the resolved root to config.toml
-  --metadata-only            Skip extraction + LLM summarization
-  --concurrency <N>          Max parallel files.list calls (default 4, max 15)
-  --provider <NAME>          LLM provider: anthropic (default) | openai
-  --max-size <BYTES>         Skip files larger than this (default 20971520 = 20MB)
-  --max-pdf-pages <N>        Slice PDFs to first N pages before extraction (default 10)
-  --json                     Emit JSON envelope
+  --scope <FOLDER_ID>          Start folder id or alias (default: \`root\`)
+  --root <FOLDER_ID>           One-shot root override (bypasses config.toml)
+  --add-root                   Persist the resolved root to config.toml
+  --metadata-only              Skip extraction + LLM summarization + embeddings
+  --concurrency <N>            Max parallel files.list calls (default 4, max 15)
+  --provider <NAME>            LLM provider: anthropic (default) | openai
+  --embedding-provider <NAME>  Embedding provider: openai (default) | voyage
+  --rebuild-embeddings         Drop + recreate the vector table at the current provider's dimension
+  --max-size <BYTES>           Skip files larger than this (default 20971520 = 20MB)
+  --max-pdf-pages <N>          Slice PDFs to first N pages before extraction (default 10)
+  --json                       Emit JSON envelope
 
 Environment:
-  ANTHROPIC_API_KEY          Required for --provider anthropic
-  OPENAI_API_KEY             Required for --provider openai
-  GDRIVESCOPE_LLM_PROVIDER   Default provider (flag > env > config > anthropic)
-  GDRIVESCOPE_MAX_SIZE       Default --max-size value
-  GDRIVESCOPE_MAX_PDF_PAGES  Default --max-pdf-pages value
+  ANTHROPIC_API_KEY                Required for --provider anthropic
+  OPENAI_API_KEY                   Required for --provider openai and default --embedding-provider openai
+  VOYAGE_API_KEY                   Required for --embedding-provider voyage
+  GDRIVESCOPE_LLM_PROVIDER         Default LLM provider (flag > env > config > anthropic)
+  GDRIVESCOPE_EMBEDDING_PROVIDER   Default embedding provider (flag > env > config > openai)
+  GDRIVESCOPE_MAX_SIZE             Default --max-size value
+  GDRIVESCOPE_MAX_PDF_PAGES        Default --max-pdf-pages value
 `;
 
 const DEFAULT_MAX_SIZE_BYTES = 20 * 1024 * 1024;
@@ -165,6 +173,12 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
           flagProvider: flags.provider,
           configProvider: cfg.llm?.provider,
         });
+    const embedding = metadataOnly
+      ? null
+      : resolveEmbeddingProvider({
+          flagProvider: flags['embedding-provider'],
+          configProvider: cfg.embedding?.provider,
+        });
 
     const configuredRoots: ConfigRoot[] = flags.root
       ? [{ id: flags.root }]
@@ -195,6 +209,8 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       concurrency,
       metadataOnly,
       llm,
+      embedding,
+      rebuildEmbeddings: flags['rebuild-embeddings'] === true,
       maxSizeBytes,
       maxPdfPages,
     });
@@ -234,6 +250,7 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       files,
       extracted: stats.extracted,
       summarized: stats.summarized,
+      embedded: stats.embedded,
       skipped: stats.skipped,
       errors: stats.errors,
       usedFallback: ancestry.usedFallback,
@@ -254,6 +271,7 @@ export function render(data: IndexData): string {
     `  files:      ${data.files}`,
     `  extracted:  ${data.extracted}`,
     `  summarized: ${data.summarized}`,
+    `  embedded:   ${data.embedded}`,
     `  skipped:    ${data.skipped}`,
     `  errors:     ${data.errors}`,
     `  db:         ${data.dbPath}`,

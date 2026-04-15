@@ -46,6 +46,8 @@ export async function main(argv: string[]): Promise<number> {
       'metadata-only': { type: 'boolean' },
       concurrency: { type: 'string' },
       provider: { type: 'string' },
+      'embedding-provider': { type: 'string' },
+      'rebuild-embeddings': { type: 'boolean' },
       'max-size': { type: 'string' },
       'max-pdf-pages': { type: 'string' },
       recursive: { type: 'boolean', short: 'r' },

@@ -14,8 +14,15 @@ import { hydrateGraph } from '../graph/hydrate.js';
 import type { DriveNodeInput } from '../graph/model.js';
 import { nodePath } from '../graph/paths.js';
 import type { Store } from '../graph/store.js';
+import type { EmbeddingProvider } from '../llm/embedding-provider.js';
 import type { LlmProvider } from '../llm/provider.js';
 import { warn } from '../utils/logging.js';
+
+// Whole-doc markdown often overruns a model's context window; embed the
+// first EMBED_WINDOW characters (~500 tokens) at the document level. Per-
+// chunk embeddings are deliberately deferred — `file search` ranks by
+// document-level similarity, not passage-level.
+const EMBED_WINDOW = 2000;
 
 export interface RunIndexOpts {
   store: Store;
@@ -23,6 +30,8 @@ export interface RunIndexOpts {
   rootId: string;
   metadataOnly: boolean;
   llm: LlmProvider | null;
+  embedding?: EmbeddingProvider | null;
+  rebuildEmbeddings?: boolean;
   maxSizeBytes: number;
   maxPdfPages: number;
   /** Anchor root id stamped on emitted nodes. Falls back to `rootId`. */
@@ -35,6 +44,7 @@ export interface RunIndexOpts {
 export interface IndexStats extends TraverseResult {
   extracted: number;
   summarized: number;
+  embedded: number;
   skipped: number;
   errors: number;
 }
@@ -53,6 +63,7 @@ export async function runIndexPipeline(
     ...traverseStats,
     extracted: 0,
     summarized: 0,
+    embedded: 0,
     skipped: 0,
     errors: 0,
   };
@@ -138,6 +149,41 @@ export async function runIndexPipeline(
         const message = err instanceof Error ? err.message : String(err);
         opts.store.recordError(id, message);
         warn(`index: node ${id} failed: ${message}`);
+      }
+    }
+
+    if (opts.embedding) {
+      try {
+        const embedding = opts.embedding;
+        opts.store.initVectorTable(embedding.dimensions, {
+          rebuild: opts.rebuildEmbeddings,
+        });
+        const freshGraph = hydrateGraph(opts.store);
+        const toEmbed = freshGraph
+          .nodes()
+          .map((nid) => freshGraph.getNodeAttributes(nid))
+          .filter(
+            (n): n is typeof n & { extractedMd: string } =>
+              n.extractedMd != null
+          );
+        if (toEmbed.length > 0) {
+          const texts = toEmbed.map((n) =>
+            n.extractedMd.slice(0, EMBED_WINDOW)
+          );
+          const vectors = await embedding.embed(texts);
+          for (let i = 0; i < toEmbed.length; i += 1) {
+            const node = toEmbed[i];
+            const vec = vectors[i];
+            if (!node || !vec) continue;
+            opts.store.upsertEmbedding(node.id, new Float32Array(vec));
+          }
+          stats.embedded = toEmbed.length;
+        }
+      } catch (err) {
+        stats.errors += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        warn(`index: embedding step failed: ${message}`);
+        throw err;
       }
     }
   } finally {
