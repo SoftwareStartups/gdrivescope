@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { tmpdir } from 'node:os';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { makeFakeDrive } from '../helpers/fakeDrive.js';
 
 const FOLDER = 'application/vnd.google-apps.folder';
@@ -56,7 +56,7 @@ describe('gdrivescope index (integration)', () => {
 
   test('populates the nodes table and returns an ok envelope', async () => {
     const { run } = await import('../../src/cli/commands/index.js');
-    const response = await run({ scope: 'root' });
+    const response = await run({ scope: 'root', 'metadata-only': true });
 
     expect(response.ok).toBe(true);
     if (!response.ok) return;
@@ -79,7 +79,7 @@ describe('gdrivescope index (integration)', () => {
       const schema = db
         .query<{ v: string }, [string]>('SELECT v FROM meta WHERE k = ?')
         .get('schema_version');
-      expect(schema?.v).toBe('2');
+      expect(schema?.v).toBe('3');
     } finally {
       db.close();
     }
@@ -88,7 +88,7 @@ describe('gdrivescope index (integration)', () => {
   test('re-run is idempotent — same row count, last_index_run advances', async () => {
     const { run } = await import('../../src/cli/commands/index.js');
 
-    const first = await run({ scope: 'root' });
+    const first = await run({ scope: 'root', 'metadata-only': true });
     expect(first.ok).toBe(true);
 
     const db1 = new Database(dbPath, { readonly: true });
@@ -100,7 +100,7 @@ describe('gdrivescope index (integration)', () => {
     // Ensure wall-clock advances for the last_index_run string comparison.
     await new Promise((resolve) => setTimeout(resolve, 5));
 
-    const second = await run({ scope: 'root' });
+    const second = await run({ scope: 'root', 'metadata-only': true });
     expect(second.ok).toBe(true);
 
     const db2 = new Database(dbPath, { readonly: true });

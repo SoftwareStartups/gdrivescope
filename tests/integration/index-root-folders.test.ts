@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { drive_v3 } from '@googleapis/drive';
 import { Database } from 'bun:sqlite';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { drive_v3 } from '@googleapis/drive';
 import { saveWorkspaceConfig } from '../../src/config/workspace.js';
 
 const FOLDER = 'application/vnd.google-apps.folder';
@@ -117,7 +117,7 @@ describe('index command with configured root', () => {
   test('indexing two sibling scopes produces one connected graph', async () => {
     const { run } = await import('../../src/cli/commands/index.js');
 
-    const first = await run({ scope: 'acme' });
+    const first = await run({ scope: 'acme', 'metadata-only': true });
     expect(first.ok).toBe(true);
     if (!first.ok) return;
     expect(first.data.rootId).toBe('company-root');
@@ -129,7 +129,7 @@ describe('index command with configured root', () => {
     ]);
     expect(first.data.usedFallback).toBe(false);
 
-    const second = await run({ scope: 'beta' });
+    const second = await run({ scope: 'beta', 'metadata-only': true });
     expect(second.ok).toBe(true);
     if (!second.ok) return;
     expect(second.data.rootId).toBe('company-root');
@@ -198,7 +198,7 @@ describe('index command with configured root', () => {
     );
 
     const { run } = await import('../../src/cli/commands/index.js');
-    const result = await run({ scope: 'acme' });
+    const result = await run({ scope: 'acme', 'metadata-only': true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.usedFallback).toBe(true);

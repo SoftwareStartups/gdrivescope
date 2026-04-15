@@ -8,9 +8,25 @@ export interface ConfigRoot {
   label?: string;
 }
 
+export interface LlmConfig {
+  provider?: string;
+}
+
+export interface EmbeddingConfig {
+  provider?: string;
+}
+
+export interface ExtractionConfig {
+  maxSizeBytes?: number;
+  maxPdfPages?: number;
+}
+
 export interface WorkspaceConfig {
   roots: ConfigRoot[];
   folders: Record<string, string>;
+  llm?: LlmConfig;
+  embedding?: EmbeddingConfig;
+  extraction?: ExtractionConfig;
 }
 
 export const EMPTY_WORKSPACE_CONFIG: WorkspaceConfig = Object.freeze({
@@ -50,6 +66,30 @@ function parseFolders(raw: unknown): Record<string, string> {
   return out;
 }
 
+function parseLlm(raw: unknown): LlmConfig | undefined {
+  if (!isStringRecord(raw)) return undefined;
+  const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
+  return provider ? { provider } : undefined;
+}
+
+function parseEmbedding(raw: unknown): EmbeddingConfig | undefined {
+  if (!isStringRecord(raw)) return undefined;
+  const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
+  return provider ? { provider } : undefined;
+}
+
+function parseExtraction(raw: unknown): ExtractionConfig | undefined {
+  if (!isStringRecord(raw)) return undefined;
+  const out: ExtractionConfig = {};
+  if (typeof raw.max_size_bytes === 'number') {
+    out.maxSizeBytes = raw.max_size_bytes;
+  }
+  if (typeof raw.max_pdf_pages === 'number') {
+    out.maxPdfPages = raw.max_pdf_pages;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export async function loadWorkspaceConfig(
   path?: string
 ): Promise<WorkspaceConfig> {
@@ -63,10 +103,17 @@ export async function loadWorkspaceConfig(
     return { roots: [], folders: {} };
   }
   const parsed = parse(text) as Record<string, unknown>;
-  return {
+  const cfg: WorkspaceConfig = {
     roots: parseRoots(parsed.roots),
     folders: parseFolders(parsed.folders),
   };
+  const llm = parseLlm(parsed.llm);
+  if (llm) cfg.llm = llm;
+  const embedding = parseEmbedding(parsed.embedding);
+  if (embedding) cfg.embedding = embedding;
+  const extraction = parseExtraction(parsed.extraction);
+  if (extraction) cfg.extraction = extraction;
+  return cfg;
 }
 
 export async function saveWorkspaceConfig(
@@ -83,6 +130,22 @@ export async function saveWorkspaceConfig(
   }
   if (Object.keys(cfg.folders).length > 0) {
     payload.folders = cfg.folders;
+  }
+  if (cfg.llm?.provider) {
+    payload.llm = { provider: cfg.llm.provider };
+  }
+  if (cfg.embedding?.provider) {
+    payload.embedding = { provider: cfg.embedding.provider };
+  }
+  if (cfg.extraction) {
+    const e: Record<string, unknown> = {};
+    if (cfg.extraction.maxSizeBytes !== undefined) {
+      e.max_size_bytes = cfg.extraction.maxSizeBytes;
+    }
+    if (cfg.extraction.maxPdfPages !== undefined) {
+      e.max_pdf_pages = cfg.extraction.maxPdfPages;
+    }
+    if (Object.keys(e).length > 0) payload.extraction = e;
   }
   const body =
     Object.keys(payload).length === 0

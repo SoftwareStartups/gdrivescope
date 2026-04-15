@@ -1,5 +1,3 @@
-import type { ApiResponse } from '../../models/api-response.js';
-import { success } from '../../models/api-response.js';
 import {
   type ConfigRoot,
   loadWorkspaceConfig,
@@ -7,13 +5,16 @@ import {
   saveWorkspaceConfig,
   upsertRoot,
 } from '../../config/workspace.js';
-import { createDriveClient } from '../../drive/client.js';
 import { resolveAncestry } from '../../drive/ancestry.js';
-import { traverseDriveFolder } from '../../drive/traversal.js';
+import { createDriveClient } from '../../drive/client.js';
 import { openStore } from '../../graph/store.js';
+import { resolveLlmProvider } from '../../llm/resolver.js';
+import type { ApiResponse } from '../../models/api-response.js';
+import { success } from '../../models/api-response.js';
+import { runIndexPipeline } from '../../pipeline/index-pipeline.js';
 import { getDbPath } from '../../utils/config.js';
-import { warn } from '../../utils/logging.js';
 import { toResponse } from '../../utils/errors.js';
+import { warn } from '../../utils/logging.js';
 
 export interface IndexFlags {
   scope?: string;
@@ -21,6 +22,9 @@ export interface IndexFlags {
   'add-root'?: boolean;
   'metadata-only'?: boolean;
   concurrency?: string;
+  provider?: string;
+  'max-size'?: string;
+  'max-pdf-pages'?: string;
 }
 
 export interface IndexData {
@@ -32,6 +36,10 @@ export interface IndexData {
   visited: number;
   folders: number;
   files: number;
+  extracted: number;
+  summarized: number;
+  skipped: number;
+  errors: number;
   usedFallback: boolean;
 }
 
@@ -42,30 +50,43 @@ Traverses a Drive folder (and all descendants) and persists metadata into
 updated in place, \`last_indexed\` advances, and \`meta.last_index_run\` is
 stamped on each successful run.
 
+By default, each extractable file is downloaded, passed through Kreuzberg for
+markdown extraction, and summarized via the configured LLM provider. Google
+Workspace files (Docs/Sheets/Slides) are exported as text/CSV server-side and
+skip Kreuzberg entirely. Large PDFs are sliced to the first \`--max-pdf-pages\`
+before extraction to cap CPU cost.
+
+Use \`--metadata-only\` to restore Stage 3 behavior (no extraction, no LLM,
+no cost).
+
 When one or more roots are configured in \`config.toml\`, indexing a deeper
-\`--scope\` folder also stitches the folder chain from the configured root down
-to the scope into the graph, so sibling indexes share a common ancestry.
+\`--scope\` folder also stitches the folder chain from the configured root
+down to the scope into the graph.
 
 Usage:
   gdrivescope index [options]
 
 Options:
-  --scope <FOLDER_ID>     Start folder id or alias (default: \`root\` — My Drive)
-  --root <FOLDER_ID>      One-shot root override (bypasses config.toml)
-  --add-root              Persist the resolved root to config.toml after a
-                          successful run (useful for first-time setup)
-  --metadata-only         Skip extraction + LLM summarization (Stage 3 default)
-  --concurrency <N>       Max parallel files.list calls (default 4, max 15)
-  --json                  Emit JSON envelope instead of human-readable output
+  --scope <FOLDER_ID>        Start folder id or alias (default: \`root\`)
+  --root <FOLDER_ID>         One-shot root override (bypasses config.toml)
+  --add-root                 Persist the resolved root to config.toml
+  --metadata-only            Skip extraction + LLM summarization
+  --concurrency <N>          Max parallel files.list calls (default 4, max 15)
+  --provider <NAME>          LLM provider: anthropic (default) | openai
+  --max-size <BYTES>         Skip files larger than this (default 20971520 = 20MB)
+  --max-pdf-pages <N>        Slice PDFs to first N pages before extraction (default 10)
+  --json                     Emit JSON envelope
 
-Shared drives: if the logged-in account has access to a shared drive, pass the
-shared drive folder id as --scope (optionally add it as a root). No additional
-flag is required.
-
-Notes:
-  --metadata-only is always on in this release. Full-text extraction and
-  embeddings ship in later stages.
+Environment:
+  ANTHROPIC_API_KEY          Required for --provider anthropic
+  OPENAI_API_KEY             Required for --provider openai
+  GDRIVESCOPE_LLM_PROVIDER   Default provider (flag > env > config > anthropic)
+  GDRIVESCOPE_MAX_SIZE       Default --max-size value
+  GDRIVESCOPE_MAX_PDF_PAGES  Default --max-pdf-pages value
 `;
+
+const DEFAULT_MAX_SIZE_BYTES = 20 * 1024 * 1024;
+const DEFAULT_MAX_PDF_PAGES = 10;
 
 function parseConcurrency(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
@@ -74,6 +95,49 @@ function parseConcurrency(value: string | undefined): number | undefined {
     throw new Error(`invalid --concurrency value: ${value}`);
   }
   return Math.trunc(n);
+}
+
+function parsePositiveInt(
+  label: string,
+  raw: string | undefined,
+  fallback: number
+): number {
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) {
+    throw new Error(`invalid --${label} value: ${raw}`);
+  }
+  return Math.trunc(n);
+}
+
+function resolveMaxSize(
+  flag: string | undefined,
+  cfgValue: number | undefined
+): number {
+  if (flag !== undefined) {
+    return parsePositiveInt('max-size', flag, DEFAULT_MAX_SIZE_BYTES);
+  }
+  const env = Bun.env.GDRIVESCOPE_MAX_SIZE;
+  if (env !== undefined) {
+    return parsePositiveInt('max-size', env, DEFAULT_MAX_SIZE_BYTES);
+  }
+  if (cfgValue !== undefined) return cfgValue;
+  return DEFAULT_MAX_SIZE_BYTES;
+}
+
+function resolveMaxPdfPages(
+  flag: string | undefined,
+  cfgValue: number | undefined
+): number {
+  if (flag !== undefined) {
+    return parsePositiveInt('max-pdf-pages', flag, DEFAULT_MAX_PDF_PAGES);
+  }
+  const env = Bun.env.GDRIVESCOPE_MAX_PDF_PAGES;
+  if (env !== undefined) {
+    return parsePositiveInt('max-pdf-pages', env, DEFAULT_MAX_PDF_PAGES);
+  }
+  if (cfgValue !== undefined) return cfgValue;
+  return DEFAULT_MAX_PDF_PAGES;
 }
 
 export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
@@ -85,6 +149,22 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
     const rawScope = flags.scope ?? 'root';
     const scopeId = resolveFolder(cfg, rawScope);
     const concurrency = parseConcurrency(flags.concurrency);
+    const metadataOnly = flags['metadata-only'] === true;
+    const maxSizeBytes = resolveMaxSize(
+      flags['max-size'],
+      cfg.extraction?.maxSizeBytes
+    );
+    const maxPdfPages = resolveMaxPdfPages(
+      flags['max-pdf-pages'],
+      cfg.extraction?.maxPdfPages
+    );
+
+    const llm = metadataOnly
+      ? null
+      : resolveLlmProvider({
+          flagProvider: flags.provider,
+          configProvider: cfg.llm?.provider,
+        });
 
     const configuredRoots: ConfigRoot[] = flags.root
       ? [{ id: flags.root }]
@@ -100,24 +180,29 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
     }
 
     // Emit ancestor chain first (root → scope.parent), then scope itself,
-    // then let the BFS pick up descendants from the scope node.
+    // then let the pipeline pick up descendants from the scope node.
     for (const node of ancestry.chain) {
       store.upsertNode(node);
     }
     store.upsertNode(ancestry.scope);
 
-    const result = await traverseDriveFolder(client, {
+    const stats = await runIndexPipeline({
+      store,
+      client,
       rootId: ancestry.scope.id,
       anchorRootId: ancestry.rootId,
       scopeNode: ancestry.scope,
       concurrency,
-      onNode: (node) => store.upsertNode(node),
+      metadataOnly,
+      llm,
+      maxSizeBytes,
+      maxPdfPages,
     });
 
-    // +1 for scope emitted ahead of the BFS; BFS only counts descendants.
-    const visited = result.visited + 1 + ancestry.chain.length;
-    const folders = result.folders + 1 + ancestry.chain.length;
-    const files = result.files;
+    // +1 for the scope emitted ahead of the pipeline; pipeline counts descendants.
+    const visited = stats.visited + 1 + ancestry.chain.length;
+    const folders = stats.folders + 1 + ancestry.chain.length;
+    const files = stats.files;
 
     store.setMeta('last_index_run', new Date().toISOString());
 
@@ -133,8 +218,6 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       ...ancestry.chain.map((n) => n.name),
       ancestry.scope.name,
     ];
-    // When the scope is itself the root, chain is empty and the first segment
-    // is the scope (which equals the root). Prepend rootLabel otherwise.
     const displayPath =
       ancestry.chain.length === 0
         ? [ancestry.rootLabel]
@@ -149,6 +232,10 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       visited,
       folders,
       files,
+      extracted: stats.extracted,
+      summarized: stats.summarized,
+      skipped: stats.skipped,
+      errors: stats.errors,
       usedFallback: ancestry.usedFallback,
     });
   } catch (err) {
@@ -162,14 +249,18 @@ export function render(data: IndexData): string {
   const path = data.ancestryPath.join(' / ');
   const lines = [
     `Indexed ${data.visited} node(s) under ${path}`,
-    `  root:    ${data.rootLabel} (${data.rootId})`,
-    `  folders: ${data.folders}`,
-    `  files:   ${data.files}`,
-    `  db:      ${data.dbPath}`,
+    `  root:       ${data.rootLabel} (${data.rootId})`,
+    `  folders:    ${data.folders}`,
+    `  files:      ${data.files}`,
+    `  extracted:  ${data.extracted}`,
+    `  summarized: ${data.summarized}`,
+    `  skipped:    ${data.skipped}`,
+    `  errors:     ${data.errors}`,
+    `  db:         ${data.dbPath}`,
   ];
   if (data.usedFallback) {
     lines.push(
-      '  note:    scope is not under any configured root — indexed as a standalone tree'
+      '  note:       scope is not under any configured root — indexed as a standalone tree'
     );
   }
   return lines.join('\n');
