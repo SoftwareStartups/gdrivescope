@@ -1,6 +1,6 @@
+import { CliError } from '../utils/errors.js';
 import { getAuth } from './keychain.js';
 import { SCOPE_FULL, SCOPE_METADATA } from './oauth.js';
-import { CliError } from '../utils/errors.js';
 
 export const SCOPE_METADATA_READONLY = SCOPE_METADATA;
 export const SCOPE_READONLY = SCOPE_FULL;

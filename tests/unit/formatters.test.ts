@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { fail, success } from '../../src/models/api-response.js';
 import { emit, setJsonMode } from '../../src/formatters/output.js';
+import { fail, success } from '../../src/models/api-response.js';
 
 describe('emit', () => {
   let stdoutSpy: ReturnType<typeof spyOn>;

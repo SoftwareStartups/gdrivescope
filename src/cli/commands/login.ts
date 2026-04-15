@@ -1,8 +1,8 @@
+import { resolveClientCredentials } from '../../auth/credentials.js';
+import { setVault } from '../../auth/keychain.js';
+import { authorize, SCOPE_FULL, SCOPE_METADATA } from '../../auth/oauth.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
-import { SCOPE_FULL, SCOPE_METADATA, authorize } from '../../auth/oauth.js';
-import { setVault } from '../../auth/keychain.js';
-import { resolveClientCredentials } from '../../auth/credentials.js';
 import { CliError, toResponse } from '../../utils/errors.js';
 
 export interface LoginFlags {

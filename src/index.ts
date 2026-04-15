@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import { parseArgs } from 'node:util';
 import pkg from '../package.json' with { type: 'json' };
-import { fail, success } from './models/api-response.js';
-import { emit, setJsonMode } from './formatters/output.js';
 import { registry } from './cli/registry.js';
+import { emit, setJsonMode } from './formatters/output.js';
+import { fail, success } from './models/api-response.js';
 import { toResponse } from './utils/errors.js';
 
 const HELP = `gdrivescope — Google Drive indexing, search, and download CLI
@@ -45,6 +45,9 @@ export async function main(argv: string[]): Promise<number> {
       label: { type: 'string' },
       'metadata-only': { type: 'boolean' },
       concurrency: { type: 'string' },
+      provider: { type: 'string' },
+      'max-size': { type: 'string' },
+      'max-pdf-pages': { type: 'string' },
       recursive: { type: 'boolean', short: 'r' },
       limit: { type: 'string' },
       threshold: { type: 'string' },

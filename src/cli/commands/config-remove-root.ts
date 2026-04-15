@@ -1,11 +1,11 @@
-import type { ApiResponse } from '../../models/api-response.js';
-import { fail, success } from '../../models/api-response.js';
 import {
   findRoot,
   loadWorkspaceConfig,
   removeRoot,
   saveWorkspaceConfig,
 } from '../../config/workspace.js';
+import type { ApiResponse } from '../../models/api-response.js';
+import { fail, success } from '../../models/api-response.js';
 import { toResponse } from '../../utils/errors.js';
 
 export interface ConfigRemoveRootFlags {

@@ -1,5 +1,5 @@
-import type { ApiResponse } from '../models/api-response.js';
 import { emit } from '../formatters/output.js';
+import type { ApiResponse } from '../models/api-response.js';
 import * as configAddRootCmd from './commands/config-add-root.js';
 import * as configListRootsCmd from './commands/config-list-roots.js';
 import * as configRemoveRootCmd from './commands/config-remove-root.js';

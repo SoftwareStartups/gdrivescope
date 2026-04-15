@@ -1,11 +1,11 @@
+import { CliError } from '../utils/errors.js';
+import { promptHidden } from '../utils/prompt.js';
 import {
   getStoredClientId,
   getStoredClientSecret,
   sanitizeCredential,
 } from './keychain.js';
 import type { OAuthCredentials } from './oauth.js';
-import { CliError } from '../utils/errors.js';
-import { promptHidden } from '../utils/prompt.js';
 
 export interface ClientCredentialFlags {
   clientId?: string;

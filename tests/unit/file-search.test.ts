@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openStore } from '../../src/graph/store.js';
 import { run } from '../../src/cli/commands/file-search.js';
+import { openStore } from '../../src/graph/store.js';
 import { nodeInput } from '../helpers/makeStore.js';
 
 describe('file search command', () => {

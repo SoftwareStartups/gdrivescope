@@ -1,6 +1,6 @@
+import { clearVault } from '../../auth/keychain.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
-import { clearVault } from '../../auth/keychain.js';
 import { toResponse } from '../../utils/errors.js';
 
 export interface LogoutData {
