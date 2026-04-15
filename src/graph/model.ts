@@ -9,6 +9,7 @@ export interface DriveNodeInput {
   modifiedTime?: string;
   createdTime?: string;
   webViewLink?: string;
+  rootId?: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -21,6 +22,7 @@ export interface Node {
   modifiedTime?: string;
   createdTime?: string;
   webViewLink?: string;
+  rootId: string | null;
   metadataJson: string;
   summary: string | null;
   classification: string | null;

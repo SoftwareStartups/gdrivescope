@@ -12,13 +12,17 @@ Usage:
   gdrivescope <command> [options]
 
 Commands:
-  login            Authorize with Google Drive (OAuth loopback + PKCE)
-  logout           Clear stored credentials
-  index            Build or refresh the persistent Drive graph
-  file list        List files under a folder from the indexed graph
-  file show        Show a single node from the indexed graph
-  file search      Search the indexed graph by file name
-  file download    Download a file from Drive
+  login                Authorize with Google Drive (OAuth loopback + PKCE)
+  logout               Clear stored credentials
+  index                Build or refresh the persistent Drive graph
+  config show          Print the workspace config
+  config list-roots    List configured root folders
+  config add-root      Persist a Drive folder as a root
+  config remove-root   Remove a configured root
+  file list            List files under a folder from the indexed graph
+  file show            Show a single node from the indexed graph
+  file search          Search the indexed graph by file name
+  file download        Download a file from Drive
 
 Global options:
   --help, -h       Show this message
@@ -36,6 +40,9 @@ export async function main(argv: string[]): Promise<number> {
       'client-id': { type: 'string' },
       'client-secret': { type: 'string' },
       scope: { type: 'string' },
+      root: { type: 'string' },
+      'add-root': { type: 'boolean' },
+      label: { type: 'string' },
       'metadata-only': { type: 'boolean' },
       concurrency: { type: 'string' },
       recursive: { type: 'boolean', short: 'r' },

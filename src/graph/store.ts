@@ -3,6 +3,11 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { DriveNodeInput, Node } from './model.js';
 
+export interface RootSummary {
+  rootId: string | null;
+  count: number;
+}
+
 export interface Store {
   db: Database;
   upsertNode(node: DriveNodeInput): void;
@@ -10,12 +15,13 @@ export interface Store {
   listChildren(parentId: string | null): Node[];
   allNodes(): Node[];
   nodeCount(): number;
+  listRoots(): RootSummary[];
   setMeta(key: string, value: string): void;
   getMeta(key: string): string | null;
   close(): void;
 }
 
-export const SCHEMA_VERSION = '1';
+export const SCHEMA_VERSION = '2';
 
 interface NodeRow {
   id: string;
@@ -26,6 +32,7 @@ interface NodeRow {
   modified_time: string | null;
   created_time: string | null;
   web_view_link: string | null;
+  root_id: string | null;
   metadata_json: string;
   summary: string | null;
   classification: string | null;
@@ -33,6 +40,11 @@ interface NodeRow {
   extracted_md: string | null;
   content_hash: string | null;
   last_indexed: string | null;
+}
+
+interface RootSummaryRow {
+  root_id: string | null;
+  c: number;
 }
 
 interface MetaRow {
@@ -53,6 +65,7 @@ function rowToNode(row: NodeRow): Node {
     modifiedTime: row.modified_time ?? undefined,
     createdTime: row.created_time ?? undefined,
     webViewLink: row.web_view_link ?? undefined,
+    rootId: row.root_id,
     metadataJson: row.metadata_json,
     summary: row.summary,
     classification: row.classification,
@@ -61,6 +74,14 @@ function rowToNode(row: NodeRow): Node {
     contentHash: row.content_hash,
     lastIndexed: row.last_indexed,
   };
+}
+
+function hasColumn(db: Database, table: string, column: string): boolean {
+  interface PragmaRow {
+    name: string;
+  }
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as PragmaRow[];
+  return rows.some((r) => r.name === column);
 }
 
 export function openStore(path: string): Store {
@@ -87,6 +108,7 @@ export function openStore(path: string): Store {
       modified_time  TEXT,
       created_time   TEXT,
       web_view_link  TEXT,
+      root_id        TEXT,
       metadata_json  TEXT NOT NULL,
       summary        TEXT,
       classification TEXT,
@@ -96,14 +118,19 @@ export function openStore(path: string): Store {
       last_indexed   TEXT
     );
   `);
+  if (!hasColumn(db, 'nodes', 'root_id')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN root_id TEXT');
+  }
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_mime ON nodes(mime_type)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_root ON nodes(root_id)');
 
   const upsertStmt: Statement = db.prepare(`
     INSERT INTO nodes (id, parent_id, name, mime_type, size, modified_time,
-                       created_time, web_view_link, metadata_json, last_indexed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                       created_time, web_view_link, root_id, metadata_json,
+                       last_indexed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(id) DO UPDATE SET
       parent_id     = excluded.parent_id,
       name          = excluded.name,
@@ -112,6 +139,7 @@ export function openStore(path: string): Store {
       modified_time = excluded.modified_time,
       created_time  = excluded.created_time,
       web_view_link = excluded.web_view_link,
+      root_id       = excluded.root_id,
       metadata_json = excluded.metadata_json,
       last_indexed  = excluded.last_indexed
   `);
@@ -124,6 +152,9 @@ export function openStore(path: string): Store {
   );
   const allNodesStmt = db.prepare('SELECT * FROM nodes ORDER BY name ASC');
   const countStmt = db.prepare('SELECT COUNT(*) AS c FROM nodes');
+  const listRootsStmt = db.prepare(
+    'SELECT root_id, COUNT(*) AS c FROM nodes GROUP BY root_id ORDER BY root_id'
+  );
   const setMetaStmt = db.prepare(
     'INSERT INTO meta(k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v'
   );
@@ -131,6 +162,8 @@ export function openStore(path: string): Store {
 
   const existing = getMetaStmt.get('schema_version') as MetaRow | null;
   if (!existing) {
+    setMetaStmt.run('schema_version', SCHEMA_VERSION);
+  } else if (existing.v !== SCHEMA_VERSION) {
     setMetaStmt.run('schema_version', SCHEMA_VERSION);
   }
 
@@ -146,6 +179,7 @@ export function openStore(path: string): Store {
         node.modifiedTime ?? null,
         node.createdTime ?? null,
         node.webViewLink ?? null,
+        node.rootId ?? null,
         JSON.stringify(node.metadata)
       );
     },
@@ -167,6 +201,10 @@ export function openStore(path: string): Store {
     nodeCount(): number {
       const row = countStmt.get() as CountRow;
       return row.c;
+    },
+    listRoots(): RootSummary[] {
+      const rows = listRootsStmt.all() as RootSummaryRow[];
+      return rows.map((r) => ({ rootId: r.root_id, count: r.c }));
     },
     setMeta(key: string, value: string): void {
       setMetaStmt.run(key, value);

@@ -24,7 +24,7 @@ describe('openStore', () => {
   test('stamps schema_version on first open', () => {
     const store = openStore(':memory:');
     try {
-      expect(store.getMeta('schema_version')).toBe('1');
+      expect(store.getMeta('schema_version')).toBe('2');
     } finally {
       store.close();
     }

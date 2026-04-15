@@ -79,7 +79,7 @@ describe('gdrivescope index (integration)', () => {
       const schema = db
         .query<{ v: string }, [string]>('SELECT v FROM meta WHERE k = ?')
         .get('schema_version');
-      expect(schema?.v).toBe('1');
+      expect(schema?.v).toBe('2');
     } finally {
       db.close();
     }

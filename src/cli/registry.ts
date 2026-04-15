@@ -1,5 +1,9 @@
 import type { ApiResponse } from '../models/api-response.js';
 import { emit } from '../formatters/output.js';
+import * as configAddRootCmd from './commands/config-add-root.js';
+import * as configListRootsCmd from './commands/config-list-roots.js';
+import * as configRemoveRootCmd from './commands/config-remove-root.js';
+import * as configShowCmd from './commands/config-show.js';
 import * as fileDownloadCmd from './commands/file-download.js';
 import * as fileListCmd from './commands/file-list.js';
 import * as fileSearchCmd from './commands/file-search.js';
@@ -60,6 +64,41 @@ export const registry: Record<string, Record<string, Command>> = {
       indexCmd.HELP,
       indexCmd.run,
       indexCmd.render
+    ),
+  },
+  config: {
+    show: wrap<configShowCmd.ConfigShowData, configShowCmd.ConfigShowFlags>(
+      'Print the workspace config',
+      configShowCmd.HELP,
+      configShowCmd.run,
+      configShowCmd.render
+    ),
+    'list-roots': wrap<
+      configListRootsCmd.ConfigListRootsData,
+      configListRootsCmd.ConfigListRootsFlags
+    >(
+      'List configured root folders',
+      configListRootsCmd.HELP,
+      configListRootsCmd.run,
+      configListRootsCmd.render
+    ),
+    'add-root': wrap<
+      configAddRootCmd.ConfigAddRootData,
+      configAddRootCmd.ConfigAddRootFlags
+    >(
+      'Persist a Drive folder as a root',
+      configAddRootCmd.HELP,
+      configAddRootCmd.run,
+      configAddRootCmd.render
+    ),
+    'remove-root': wrap<
+      configRemoveRootCmd.ConfigRemoveRootData,
+      configRemoveRootCmd.ConfigRemoveRootFlags
+    >(
+      'Remove a configured root',
+      configRemoveRootCmd.HELP,
+      configRemoveRootCmd.run,
+      configRemoveRootCmd.render
     ),
   },
   file: {

@@ -3,7 +3,23 @@ import type { DriveNodeInput } from '../graph/model.js';
 import { createSemaphore } from './concurrency.js';
 
 export interface TraverseOptions {
+  /**
+   * BFS starting folder id. For ancestry-aware runs, pass the scope folder id
+   * — the ancestor chain should already be emitted by the caller via
+   * `resolveAncestry`.
+   */
   rootId: string;
+  /**
+   * Anchor root id stamped onto every emitted node. When omitted, falls back
+   * to `rootId` (scope acts as its own root — legacy behaviour).
+   */
+  anchorRootId?: string;
+  /**
+   * Optional pre-resolved scope node. When provided, traversal skips the
+   * `files.get` seed call and uses this node as the BFS entry (the caller is
+   * expected to have emitted it and any ancestors already).
+   */
+  scopeNode?: DriveNodeInput;
   onNode: (node: DriveNodeInput) => void | Promise<void>;
   concurrency?: number;
   signal?: AbortSignal;
@@ -29,7 +45,8 @@ export const CONCURRENCY_MAX = 15;
 
 function fileToNodeInput(
   file: drive_v3.Schema$File,
-  parentId: string | null
+  parentId: string | null,
+  rootId: string | null
 ): DriveNodeInput {
   return {
     id: file.id ?? '',
@@ -40,6 +57,7 @@ function fileToNodeInput(
     modifiedTime: file.modifiedTime ?? undefined,
     createdTime: file.createdTime ?? undefined,
     webViewLink: file.webViewLink ?? undefined,
+    rootId,
     metadata: file as unknown as Record<string, unknown>,
   };
 }
@@ -118,19 +136,34 @@ export async function traverseDriveFolder(
   let folders = 0;
   let files = 0;
 
-  // Seed: fetch the root folder metadata so the graph has an anchor.
-  const rootResponse = await client.files.get({
-    fileId: opts.rootId,
-    fields: ROOT_FIELDS,
-    supportsAllDrives: true,
-  });
-  const rootFile = rootResponse.data;
-  await opts.onNode(fileToNodeInput(rootFile, null));
-  visited += 1;
-  folders += 1;
-  const rootKey = rootFile.id ?? opts.rootId;
-  seenFolders.add(rootKey);
-  queue.push(rootKey);
+  let bfsStartId: string;
+
+  if (opts.scopeNode) {
+    // Caller already emitted the scope node (and any ancestors). Just seed
+    // the queue from it without fetching or re-emitting.
+    bfsStartId = opts.scopeNode.id;
+  } else {
+    // Legacy path: seed by fetching the scope folder metadata and emitting
+    // it as its own root.
+    const anchorRootId = opts.anchorRootId ?? null;
+    const rootResponse = await client.files.get({
+      fileId: opts.rootId,
+      fields: ROOT_FIELDS,
+      supportsAllDrives: true,
+    });
+    const rootFile = rootResponse.data;
+    const resolvedRootId = rootFile.id ?? opts.rootId;
+    await opts.onNode(
+      fileToNodeInput(rootFile, null, anchorRootId ?? resolvedRootId)
+    );
+    visited += 1;
+    folders += 1;
+    bfsStartId = resolvedRootId;
+  }
+
+  const anchor = opts.anchorRootId ?? bfsStartId;
+  seenFolders.add(bfsStartId);
+  queue.push(bfsStartId);
 
   const visitFolder = async (folderId: string): Promise<void> => {
     const release = await sem.acquire();
@@ -141,7 +174,7 @@ export async function traverseDriveFolder(
         if (file.mimeType === SHORTCUT_MIME) {
           node = await resolveShortcut(client, file);
         }
-        await opts.onNode(fileToNodeInput(node, folderId));
+        await opts.onNode(fileToNodeInput(node, folderId, anchor));
         visited += 1;
         if (node.mimeType === FOLDER_MIME) {
           folders += 1;

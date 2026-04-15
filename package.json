@@ -53,6 +53,7 @@
     "graphology-operators": "latest",
     "graphology-traversal": "latest",
     "openai": "latest",
+    "smol-toml": "^1.6.1",
     "sqlite-vec": "latest"
   },
   "devDependencies": {
