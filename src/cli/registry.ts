@@ -1,5 +1,9 @@
 import type { ApiResponse } from '../models/api-response.js';
 import { emit } from '../formatters/output.js';
+import * as fileDownloadCmd from './commands/file-download.js';
+import * as fileListCmd from './commands/file-list.js';
+import * as fileSearchCmd from './commands/file-search.js';
+import * as fileShowCmd from './commands/file-show.js';
 import * as indexCmd from './commands/index.js';
 import * as loginCmd from './commands/login.js';
 import * as logoutCmd from './commands/logout.js';
@@ -56,6 +60,35 @@ export const registry: Record<string, Record<string, Command>> = {
       indexCmd.HELP,
       indexCmd.run,
       indexCmd.render
+    ),
+  },
+  file: {
+    list: wrap<fileListCmd.FileListData, fileListCmd.FileListFlags>(
+      'List files under a folder from the indexed graph',
+      fileListCmd.HELP,
+      fileListCmd.run,
+      fileListCmd.render
+    ),
+    show: wrap<fileShowCmd.FileShowData, fileShowCmd.FileShowFlags>(
+      'Show a single node from the indexed graph',
+      fileShowCmd.HELP,
+      fileShowCmd.run,
+      fileShowCmd.render
+    ),
+    search: wrap<fileSearchCmd.FileSearchData, fileSearchCmd.FileSearchFlags>(
+      'Search the indexed graph by file name',
+      fileSearchCmd.HELP,
+      fileSearchCmd.run,
+      fileSearchCmd.render
+    ),
+    download: wrap<
+      fileDownloadCmd.FileDownloadData,
+      fileDownloadCmd.FileDownloadFlags
+    >(
+      'Download a file from Drive',
+      fileDownloadCmd.HELP,
+      fileDownloadCmd.run,
+      fileDownloadCmd.render
     ),
   },
 };

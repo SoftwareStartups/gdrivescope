@@ -15,6 +15,10 @@ Commands:
   login            Authorize with Google Drive (OAuth loopback + PKCE)
   logout           Clear stored credentials
   index            Build or refresh the persistent Drive graph
+  file list        List files under a folder from the indexed graph
+  file show        Show a single node from the indexed graph
+  file search      Search the indexed graph by file name
+  file download    Download a file from Drive
 
 Global options:
   --help, -h       Show this message
@@ -34,6 +38,12 @@ export async function main(argv: string[]): Promise<number> {
       scope: { type: 'string' },
       'metadata-only': { type: 'boolean' },
       concurrency: { type: 'string' },
+      recursive: { type: 'boolean', short: 'r' },
+      limit: { type: 'string' },
+      threshold: { type: 'string' },
+      classification: { type: 'string' },
+      format: { type: 'string' },
+      output: { type: 'string', short: 'o' },
     },
     allowPositionals: true,
     strict: false,
@@ -73,8 +83,14 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
 
+  const commandFlags: Record<string, unknown> = { ...values };
+  // A nested command (e.g. `file list <id>`) resolves its positional at
+  // index 2 (after noun + verb); top-level commands that use the `_` sentinel
+  // verb take their positional at index 1.
+  commandFlags._positional = verb === '_' ? positionals[1] : positionals[2];
+
   try {
-    await command.execute(values, {
+    await command.execute(commandFlags, {
       json: asJson,
       help: wantsHelp,
     });

@@ -1,13 +1,30 @@
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
-import { SCOPE_METADATA, authorize } from '../../auth/oauth.js';
+import { SCOPE_FULL, SCOPE_METADATA, authorize } from '../../auth/oauth.js';
 import { setVault } from '../../auth/keychain.js';
 import { resolveClientCredentials } from '../../auth/credentials.js';
-import { toResponse } from '../../utils/errors.js';
+import { CliError, toResponse } from '../../utils/errors.js';
 
 export interface LoginFlags {
   'client-id'?: string;
   'client-secret'?: string;
+  scope?: string;
+}
+
+const SCOPE_ALIASES: Record<string, string> = {
+  'drive.metadata.readonly': SCOPE_METADATA,
+  'drive.readonly': SCOPE_FULL,
+};
+
+function resolveScope(raw: string | undefined): string {
+  if (raw === undefined) return SCOPE_METADATA;
+  const mapped = SCOPE_ALIASES[raw];
+  if (mapped) return mapped;
+  if (raw.startsWith('https://www.googleapis.com/auth/')) return raw;
+  throw new CliError(
+    `Unknown --scope value: ${raw}. Use drive.metadata.readonly or drive.readonly.`,
+    'USAGE'
+  );
 }
 
 export interface LoginData {
@@ -22,11 +39,12 @@ credentials together in a single OS keychain entry (service:
 com.softwarestartups.gdrivescope, key: gdrivescope.vault).
 
 Usage:
-  gdrivescope login [--client-id <id>] [--client-secret <secret>] [--json]
+  gdrivescope login [--client-id <id>] [--client-secret <secret>] [--scope <name>] [--json]
 
 Options:
   --client-id <id>         Google OAuth client id
   --client-secret <secret> Google OAuth client secret
+  --scope <name>           drive.metadata.readonly (default) or drive.readonly
   --json                   Emit JSON envelope instead of human-readable output
 
 Credential resolution (in order):
@@ -42,6 +60,7 @@ secret.
 
 export async function run(flags: LoginFlags): Promise<ApiResponse<LoginData>> {
   try {
+    const requestedScope = resolveScope(flags.scope);
     const credentials = await resolveClientCredentials({
       flags: {
         clientId: flags['client-id'],
@@ -49,8 +68,8 @@ export async function run(flags: LoginFlags): Promise<ApiResponse<LoginData>> {
       },
       interactive: true,
     });
-    const result = await authorize(SCOPE_METADATA, credentials);
-    const scope = result.scope || SCOPE_METADATA;
+    const result = await authorize(requestedScope, credentials);
+    const scope = result.scope || requestedScope;
     await setVault({
       refreshToken: result.refreshToken,
       scope,

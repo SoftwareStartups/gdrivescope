@@ -6,6 +6,11 @@ export type ErrorCode =
   | 'USAGE'
   | 'UNKNOWN_COMMAND'
   | 'NOT_IMPLEMENTED'
+  | 'NOT_YET_IMPLEMENTED'
+  | 'MISSING_ARG'
+  | 'NODE_NOT_FOUND'
+  | 'SCOPE_REQUIRED'
+  | 'UNSUPPORTED_MIME'
   | 'UNKNOWN';
 
 export class CliError extends Error {
