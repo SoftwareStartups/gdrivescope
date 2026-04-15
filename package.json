@@ -53,6 +53,7 @@
     "graphology-operators": "latest",
     "graphology-traversal": "latest",
     "openai": "latest",
+    "pdf-lib": "^1.17.1",
     "smol-toml": "^1.6.1",
     "sqlite-vec": "latest"
   },
