@@ -1,29 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { resolveEmbeddingProvider } from '../../src/llm/embedding-resolver.js';
 import { CliError } from '../../src/utils/errors.js';
+import { useEnvGuard } from '../helpers/envGuard.js';
 
-const ENV_KEYS = [
+const guard = useEnvGuard([
   'GDRIVESCOPE_EMBEDDING_PROVIDER',
   'OPENAI_API_KEY',
   'VOYAGE_API_KEY',
-] as const;
+]);
 
 describe('resolveEmbeddingProvider', () => {
-  const saved: Record<string, string | undefined> = {};
-
-  beforeEach(() => {
-    for (const k of ENV_KEYS) {
-      saved[k] = Bun.env[k];
-      delete Bun.env[k];
-    }
-  });
-
-  afterEach(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete Bun.env[k];
-      else Bun.env[k] = saved[k];
-    }
-  });
+  beforeEach(() => guard.setup());
+  afterEach(() => guard.teardown());
 
   test('default resolves to openai when OPENAI_API_KEY is set', () => {
     Bun.env.OPENAI_API_KEY = 'o';

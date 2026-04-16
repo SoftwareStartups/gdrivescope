@@ -1,7 +1,7 @@
 import { hydrateGraph } from '../../graph/hydrate.js';
 import type { Node } from '../../graph/model.js';
 import { nodePath } from '../../graph/paths.js';
-import { openStore, type Store } from '../../graph/store.js';
+import { withStoreAsync } from '../../graph/store.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
 import { getDbPath } from '../../utils/config.js';
@@ -62,22 +62,20 @@ export async function run(
       new CliError('Usage: gdrivescope file show <ID>', 'MISSING_ARG')
     );
   }
-  let store: Store | null = null;
   try {
-    store = openStore(getDbPath());
-    const row = store.getNode(flags._positional);
-    if (!row) {
-      throw new CliError(
-        `No node ${flags._positional} in index.`,
-        'NODE_NOT_FOUND'
-      );
-    }
-    const graph = hydrateGraph(store);
-    return success({ node: toShowNode(row), path: nodePath(graph, row.id) });
+    return await withStoreAsync(getDbPath(), async (store) => {
+      const row = store.getNode(flags._positional!);
+      if (!row) {
+        throw new CliError(
+          `No node ${flags._positional} in index.`,
+          'NODE_NOT_FOUND'
+        );
+      }
+      const graph = hydrateGraph(store);
+      return success({ node: toShowNode(row), path: nodePath(graph, row.id) });
+    });
   } catch (err) {
     return toResponse(err);
-  } finally {
-    store?.close();
   }
 }
 

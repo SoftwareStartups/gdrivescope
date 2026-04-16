@@ -1,5 +1,5 @@
 import { loadWorkspaceConfig } from '../../config/workspace.js';
-import { openStore } from '../../graph/store.js';
+import { withStoreAsync } from '../../graph/store.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
 import { getDbPath } from '../../utils/config.js';
@@ -30,32 +30,31 @@ Usage:
 export async function run(
   _flags: ConfigListRootsFlags
 ): Promise<ApiResponse<ConfigListRootsData>> {
-  const store = openStore(getDbPath());
   try {
-    const cfg = await loadWorkspaceConfig();
-    const summaries = store.listRoots();
-    const countByRoot = new Map<string | null, number>();
-    for (const s of summaries) countByRoot.set(s.rootId, s.count);
+    return await withStoreAsync(getDbPath(), async (store) => {
+      const cfg = await loadWorkspaceConfig();
+      const summaries = store.listRoots();
+      const countByRoot = new Map<string | null, number>();
+      for (const s of summaries) countByRoot.set(s.rootId, s.count);
 
-    const seen = new Set<string>();
-    const roots: RootEntry[] = [];
-    for (const r of cfg.roots) {
-      seen.add(r.id);
-      roots.push({
-        id: r.id,
-        label: r.label ?? null,
-        indexedNodes: countByRoot.get(r.id) ?? 0,
-      });
-    }
-    for (const s of summaries) {
-      if (s.rootId === null || seen.has(s.rootId)) continue;
-      roots.push({ id: s.rootId, label: null, indexedNodes: s.count });
-    }
-    return success({ roots });
+      const seen = new Set<string>();
+      const roots: RootEntry[] = [];
+      for (const r of cfg.roots) {
+        seen.add(r.id);
+        roots.push({
+          id: r.id,
+          label: r.label ?? null,
+          indexedNodes: countByRoot.get(r.id) ?? 0,
+        });
+      }
+      for (const s of summaries) {
+        if (s.rootId === null || seen.has(s.rootId)) continue;
+        roots.push({ id: s.rootId, label: null, indexedNodes: s.count });
+      }
+      return success({ roots });
+    });
   } catch (err) {
     return toResponse(err);
-  } finally {
-    store.close();
   }
 }
 

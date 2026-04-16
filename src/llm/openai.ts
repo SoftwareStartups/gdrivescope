@@ -1,17 +1,11 @@
 import OpenAI from 'openai';
 import { CliError } from '../utils/errors.js';
-import type { Classification } from './classification.js';
 import { SUMMARY_SYSTEM, summaryUser } from './prompts.js';
 import type { LlmProvider, LlmSummarizeInput, LlmSummary } from './provider.js';
 import { LLM_SUMMARY_SCHEMA } from './summary-schema.js';
+import { validateRawSummary } from './summary-parse.js';
 
 const MODEL = Bun.env.GDRIVESCOPE_OPENAI_MODEL ?? 'gpt-4.1-mini';
-
-interface RawSummary {
-  summary: string;
-  classification: string;
-  key_topics: string[];
-}
 
 export class OpenaiProvider implements LlmProvider {
   readonly name = 'openai';
@@ -57,9 +51,9 @@ export class OpenaiProvider implements LlmProvider {
         'LLM_MALFORMED_OUTPUT'
       );
     }
-    let raw: RawSummary;
+    let parsed: unknown;
     try {
-      raw = JSON.parse(text) as RawSummary;
+      parsed = JSON.parse(text);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new CliError(
@@ -67,16 +61,6 @@ export class OpenaiProvider implements LlmProvider {
         'LLM_MALFORMED_OUTPUT'
       );
     }
-    if (!raw || typeof raw.summary !== 'string') {
-      throw new CliError(
-        'OpenAI response is missing required fields',
-        'LLM_MALFORMED_OUTPUT'
-      );
-    }
-    return {
-      summary: raw.summary,
-      classification: raw.classification as Classification,
-      keyTopics: raw.key_topics,
-    };
+    return validateRawSummary('OpenAI', parsed);
   }
 }

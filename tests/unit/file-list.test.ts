@@ -1,30 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { run } from '../../src/cli/commands/file-list.js';
-import type { DriveNodeInput } from '../../src/graph/model.js';
-import { openStore } from '../../src/graph/store.js';
 import { nodeInput } from '../helpers/makeStore.js';
-
-function seedDb(dbPath: string, nodes: DriveNodeInput[]): void {
-  const store = openStore(dbPath);
-  try {
-    for (const n of nodes) store.upsertNode(n);
-  } finally {
-    store.close();
-  }
-}
+import {
+  type TempDbContext,
+  seedTempDb,
+  useTempDb,
+} from '../helpers/tempDb.js';
 
 describe('file list command', () => {
-  let tmpDir: string;
-  let dbPath: string;
+  let ctx: TempDbContext;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'gdrivescope-filelist-'));
-    dbPath = join(tmpDir, 'drive.db');
-    Bun.env.GDRIVESCOPE_DB = dbPath;
-    seedDb(dbPath, [
+    ctx = useTempDb('filelist');
+    seedTempDb(ctx.dbPath, [
       nodeInput({ id: 'root', name: 'My Drive', parentId: null }),
       nodeInput({ id: 'docs', name: 'Docs', parentId: 'root' }),
       nodeInput({ id: 'images', name: 'Images', parentId: 'root' }),
@@ -50,10 +38,7 @@ describe('file list command', () => {
     ]);
   });
 
-  afterEach(() => {
-    delete Bun.env.GDRIVESCOPE_DB;
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
+  afterEach(() => ctx.cleanup());
 
   test('default lists direct children of root', async () => {
     const response = await run({ _positional: 'root' });

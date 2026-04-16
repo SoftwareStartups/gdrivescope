@@ -1,17 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { CliError } from '../utils/errors.js';
-import type { Classification } from './classification.js';
 import { SUMMARY_SYSTEM, summaryUser } from './prompts.js';
 import type { LlmProvider, LlmSummarizeInput, LlmSummary } from './provider.js';
 import { LLM_SUMMARY_SCHEMA } from './summary-schema.js';
+import { validateRawSummary } from './summary-parse.js';
 
 const MODEL = Bun.env.GDRIVESCOPE_ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
-
-interface RawSummary {
-  summary: string;
-  classification: string;
-  key_topics: string[];
-}
 
 export class AnthropicProvider implements LlmProvider {
   readonly name = 'anthropic';
@@ -65,17 +59,6 @@ export class AnthropicProvider implements LlmProvider {
         'LLM_MALFORMED_OUTPUT'
       );
     }
-    const raw = toolUse.input as RawSummary;
-    if (!raw || typeof raw.summary !== 'string') {
-      throw new CliError(
-        'Anthropic tool_use payload is malformed',
-        'LLM_MALFORMED_OUTPUT'
-      );
-    }
-    return {
-      summary: raw.summary,
-      classification: raw.classification as Classification,
-      keyTopics: raw.key_topics,
-    };
+    return validateRawSummary('Anthropic', toolUse.input);
   }
 }

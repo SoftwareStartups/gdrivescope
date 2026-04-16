@@ -1,72 +1,51 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { run } from '../../src/cli/commands/file-search.js';
 import { openStore } from '../../src/graph/store.js';
 import { FakeEmbeddingProvider } from '../helpers/fakeEmbedding.js';
 import { nodeInput } from '../helpers/makeStore.js';
+import {
+  type TempDbContext,
+  seedTempDb,
+  useTempDb,
+} from '../helpers/tempDb.js';
 
 describe('file search command', () => {
-  let tmpDir: string;
-  let dbPath: string;
+  let ctx: TempDbContext;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'gdrivescope-filesearch-'));
-    dbPath = join(tmpDir, 'drive.db');
-    Bun.env.GDRIVESCOPE_DB = dbPath;
-    const store = openStore(dbPath);
-    try {
-      store.upsertNode(
-        nodeInput({ id: 'root', name: 'My Drive', parentId: null })
-      );
-      store.upsertNode(
-        nodeInput({ id: 'docs', name: 'Docs', parentId: 'root' })
-      );
-      store.upsertNode(
-        nodeInput({ id: 'other', name: 'Other', parentId: 'root' })
-      );
-      store.upsertNode(
-        nodeInput({
-          id: 'r1',
-          name: 'report.pdf',
-          parentId: 'docs',
-          mimeType: 'application/pdf',
-        })
-      );
-      store.upsertNode(
-        nodeInput({
-          id: 'r2',
-          name: 'report-final.pdf',
-          parentId: 'docs',
-          mimeType: 'application/pdf',
-        })
-      );
-      store.upsertNode(
-        nodeInput({
-          id: 'n1',
-          name: 'notes.md',
-          parentId: 'docs',
-          mimeType: 'text/markdown',
-        })
-      );
-      store.upsertNode(
-        nodeInput({
-          id: 'r3',
-          name: 'strategy-report.pdf',
-          parentId: 'other',
-          mimeType: 'application/pdf',
-        })
-      );
-    } finally {
-      store.close();
-    }
+    ctx = useTempDb('filesearch');
+    seedTempDb(ctx.dbPath, [
+      nodeInput({ id: 'root', name: 'My Drive', parentId: null }),
+      nodeInput({ id: 'docs', name: 'Docs', parentId: 'root' }),
+      nodeInput({ id: 'other', name: 'Other', parentId: 'root' }),
+      nodeInput({
+        id: 'r1',
+        name: 'report.pdf',
+        parentId: 'docs',
+        mimeType: 'application/pdf',
+      }),
+      nodeInput({
+        id: 'r2',
+        name: 'report-final.pdf',
+        parentId: 'docs',
+        mimeType: 'application/pdf',
+      }),
+      nodeInput({
+        id: 'n1',
+        name: 'notes.md',
+        parentId: 'docs',
+        mimeType: 'text/markdown',
+      }),
+      nodeInput({
+        id: 'r3',
+        name: 'strategy-report.pdf',
+        parentId: 'other',
+        mimeType: 'application/pdf',
+      }),
+    ]);
   });
 
-  afterEach(() => {
-    delete Bun.env.GDRIVESCOPE_DB;
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
+  afterEach(() => ctx.cleanup());
 
   test('keyword match, sorted exact-first then by name length', async () => {
     const response = await run({ _positional: 'report' });
@@ -107,7 +86,7 @@ describe('file search command', () => {
     // because no API key is set — the important assertion here is the
     // *dispatch*, not the outcome.
     const provider = new FakeEmbeddingProvider(8);
-    const store = openStore(dbPath);
+    const store = openStore(ctx.dbPath);
     try {
       store.initVectorTable(provider.dimensions);
       const vec = (await provider.embed(['seed']))[0] ?? [];

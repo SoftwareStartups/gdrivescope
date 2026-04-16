@@ -16,6 +16,10 @@ import { runIndexPipeline } from '../../pipeline/index-pipeline.js';
 import { getDbPath } from '../../utils/config.js';
 import { toResponse } from '../../utils/errors.js';
 import { warn } from '../../utils/logging.js';
+import {
+  parseOptionalPositiveInt,
+  parsePositiveInt,
+} from '../../utils/parse.js';
 
 export interface IndexFlags {
   scope?: string;
@@ -105,31 +109,6 @@ Environment:
 const DEFAULT_MAX_SIZE_BYTES = 20 * 1024 * 1024;
 const DEFAULT_MAX_PDF_PAGES = 10;
 
-function parseConcurrency(
-  flagName: string,
-  value: string | undefined
-): number | undefined {
-  if (value === undefined) return undefined;
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 1) {
-    throw new Error(`invalid --${flagName} value: ${value}`);
-  }
-  return Math.trunc(n);
-}
-
-function parsePositiveInt(
-  label: string,
-  raw: string | undefined,
-  fallback: number
-): number {
-  if (raw === undefined) return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 1) {
-    throw new Error(`invalid --${label} value: ${raw}`);
-  }
-  return Math.trunc(n);
-}
-
 function resolveMaxSize(
   flag: string | undefined,
   cfgValue: number | undefined
@@ -169,9 +148,11 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
     const rawScope = flags.scope ?? 'root';
     const scopeId = resolveFolder(cfg, rawScope);
     const driveConcurrency =
-      parseConcurrency('concurrency-drive', flags['concurrency-drive']) ??
-      parseConcurrency('concurrency', flags.concurrency);
-    const llmConcurrency = parseConcurrency(
+      parseOptionalPositiveInt(
+        'concurrency-drive',
+        flags['concurrency-drive']
+      ) ?? parseOptionalPositiveInt('concurrency', flags.concurrency);
+    const llmConcurrency = parseOptionalPositiveInt(
       'concurrency-llm',
       flags['concurrency-llm']
     );

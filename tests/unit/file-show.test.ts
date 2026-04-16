@@ -1,43 +1,31 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { run } from '../../src/cli/commands/file-show.js';
-import { openStore } from '../../src/graph/store.js';
 import { nodeInput } from '../helpers/makeStore.js';
+import {
+  type TempDbContext,
+  seedTempDb,
+  useTempDb,
+} from '../helpers/tempDb.js';
 
 describe('file show command', () => {
-  let tmpDir: string;
-  let dbPath: string;
+  let ctx: TempDbContext;
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'gdrivescope-fileshow-'));
-    dbPath = join(tmpDir, 'drive.db');
-    Bun.env.GDRIVESCOPE_DB = dbPath;
-    const store = openStore(dbPath);
-    try {
-      store.upsertNode(
-        nodeInput({ id: 'root', name: 'My Drive', parentId: null })
-      );
-      store.upsertNode(
-        nodeInput({
-          id: 'report',
-          name: 'report.pdf',
-          parentId: 'root',
-          mimeType: 'application/pdf',
-          size: 2048,
-          metadata: { driveId: 'root', owners: ['alice'] },
-        })
-      );
-    } finally {
-      store.close();
-    }
+    ctx = useTempDb('fileshow');
+    seedTempDb(ctx.dbPath, [
+      nodeInput({ id: 'root', name: 'My Drive', parentId: null }),
+      nodeInput({
+        id: 'report',
+        name: 'report.pdf',
+        parentId: 'root',
+        mimeType: 'application/pdf',
+        size: 2048,
+        metadata: { driveId: 'root', owners: ['alice'] },
+      }),
+    ]);
   });
 
-  afterEach(() => {
-    delete Bun.env.GDRIVESCOPE_DB;
-    rmSync(tmpDir, { recursive: true, force: true });
-  });
+  afterEach(() => ctx.cleanup());
 
   test('returns a node with parsed metadata and a path', async () => {
     const response = await run({ _positional: 'report' });

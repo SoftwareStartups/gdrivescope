@@ -1,10 +1,11 @@
 import { hydrateGraph } from '../../graph/hydrate.js';
 import { descendants, nodePath } from '../../graph/paths.js';
-import { openStore, type Store } from '../../graph/store.js';
+import { withStoreAsync } from '../../graph/store.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
 import { getDbPath } from '../../utils/config.js';
 import { CliError, toResponse } from '../../utils/errors.js';
+import { parsePositiveInt } from '../../utils/parse.js';
 
 export interface FileListFlags {
   _positional?: string;
@@ -41,53 +42,42 @@ Options:
   --json             Emit JSON envelope instead of human-readable output
 `;
 
-function parseLimit(value: string | undefined, fallback: number): number {
-  if (value === undefined) return fallback;
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 1) {
-    throw new CliError(`invalid --limit value: ${value}`, 'USAGE');
-  }
-  return Math.trunc(n);
-}
-
 export async function run(
   flags: FileListFlags
 ): Promise<ApiResponse<FileListData>> {
-  let store: Store | null = null;
   try {
-    store = openStore(getDbPath());
-    const graph = hydrateGraph(store);
-    const startId = flags._positional ?? 'root';
-    if (!graph.hasNode(startId)) {
-      throw new CliError(
-        `No node ${startId} in index. Run \`gdrivescope index\` first.`,
-        'NODE_NOT_FOUND'
-      );
-    }
-    const recursive = Boolean(flags.recursive || flags.r);
-    const limit = parseLimit(flags.limit, 200);
+    return await withStoreAsync(getDbPath(), async (store) => {
+      const graph = hydrateGraph(store);
+      const startId = flags._positional ?? 'root';
+      if (!graph.hasNode(startId)) {
+        throw new CliError(
+          `No node ${startId} in index. Run \`gdrivescope index\` first.`,
+          'NODE_NOT_FOUND'
+        );
+      }
+      const recursive = Boolean(flags.recursive || flags.r);
+      const limit = parsePositiveInt('limit', flags.limit, 200);
 
-    const ids = recursive
-      ? [...descendants(graph, startId)]
-      : graph.outNeighbors(startId);
+      const ids = recursive
+        ? [...descendants(graph, startId)]
+        : graph.outNeighbors(startId);
 
-    const files: FileListEntry[] = ids
-      .map((id) => graph.getNodeAttributes(id))
-      .map((n) => ({
-        id: n.id,
-        name: n.name,
-        mimeType: n.mimeType,
-        size: n.size ?? null,
-        path: nodePath(graph, n.id),
-      }))
-      .sort((a, b) => a.path.localeCompare(b.path))
-      .slice(0, limit);
+      const files: FileListEntry[] = ids
+        .map((id) => graph.getNodeAttributes(id))
+        .map((n) => ({
+          id: n.id,
+          name: n.name,
+          mimeType: n.mimeType,
+          size: n.size ?? null,
+          path: nodePath(graph, n.id),
+        }))
+        .sort((a, b) => a.path.localeCompare(b.path))
+        .slice(0, limit);
 
-    return success({ startId, recursive, files });
+      return success({ startId, recursive, files });
+    });
   } catch (err) {
     return toResponse(err);
-  } finally {
-    store?.close();
   }
 }
 

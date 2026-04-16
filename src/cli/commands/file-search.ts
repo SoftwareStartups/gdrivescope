@@ -1,13 +1,14 @@
 import { loadWorkspaceConfig } from '../../config/workspace.js';
 import { hydrateGraph } from '../../graph/hydrate.js';
 import { descendants, nodePath } from '../../graph/paths.js';
-import { openStore, type Store } from '../../graph/store.js';
+import { withStoreAsync } from '../../graph/store.js';
 import { resolveEmbeddingProvider } from '../../llm/embedding-resolver.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
 import { semanticSearch } from '../../search/vector-search.js';
 import { getDbPath } from '../../utils/config.js';
 import { CliError, toResponse } from '../../utils/errors.js';
+import { parsePositiveInt } from '../../utils/parse.js';
 
 export type FileSearchMode = 'name' | 'semantic';
 
@@ -63,23 +64,6 @@ Environment:
   GDRIVESCOPE_EMBEDDING_PROVIDER  Default embedding provider
 `;
 
-interface NodeRow {
-  id: string;
-  name: string;
-  mime_type: string;
-  parent_id: string | null;
-  classification: string | null;
-}
-
-function parseLimit(value: string | undefined, fallback: number): number {
-  if (value === undefined) return fallback;
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 1) {
-    throw new CliError(`invalid --limit value: ${value}`, 'USAGE');
-  }
-  return Math.trunc(n);
-}
-
 function parseThreshold(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
   const n = Number(value);
@@ -97,91 +81,81 @@ export async function run(
       new CliError('Usage: gdrivescope file search <QUERY>', 'MISSING_ARG')
     );
   }
-  let store: Store | null = null;
   try {
-    store = openStore(getDbPath());
-    const hasEmbeddings = store.hasVectorTable();
-    const mode: FileSearchMode =
-      flags.mode ?? (hasEmbeddings ? 'semantic' : 'name');
-    const limit = parseLimit(flags.limit, 20);
+    return await withStoreAsync(getDbPath(), async (store) => {
+      const hasEmbeddings = store.hasVectorTable();
+      const mode: FileSearchMode =
+        flags.mode ?? (hasEmbeddings ? 'semantic' : 'name');
+      const limit = parsePositiveInt('limit', flags.limit, 20);
 
-    if (mode === 'semantic') {
-      if (!hasEmbeddings) {
-        throw new CliError(
-          'No embeddings in store. Run `gdrivescope index --scope X` first.',
-          'NO_EMBEDDINGS'
-        );
+      if (mode === 'semantic') {
+        if (!hasEmbeddings) {
+          throw new CliError(
+            'No embeddings in store. Run `gdrivescope index --scope X` first.',
+            'NO_EMBEDDINGS'
+          );
+        }
+        const cfg = await loadWorkspaceConfig();
+        const provider = resolveEmbeddingProvider({
+          flagProvider: flags['embedding-provider'],
+          configProvider: cfg.embedding?.provider,
+        });
+        const graph = hydrateGraph(store);
+        const hits = await semanticSearch({
+          query: flags._positional!,
+          provider,
+          store,
+          graph,
+          limit,
+          threshold: parseThreshold(flags.threshold),
+          scope: flags.scope,
+          classification: flags.classification,
+        });
+        return success({
+          query: flags._positional!,
+          mode,
+          hits: hits.map((h) => ({
+            id: h.id,
+            name: h.name,
+            mimeType: h.mimeType,
+            path: h.path,
+            score: h.score,
+            classification: h.classification,
+          })),
+        });
       }
-      const cfg = await loadWorkspaceConfig();
-      const provider = resolveEmbeddingProvider({
-        flagProvider: flags['embedding-provider'],
-        configProvider: cfg.embedding?.provider,
-      });
+
+      // Name-mode fallback.
+      const query = flags._positional!.toLowerCase();
       const graph = hydrateGraph(store);
-      const hits = await semanticSearch({
-        query: flags._positional,
-        provider,
-        store,
-        graph,
-        limit,
-        threshold: parseThreshold(flags.threshold),
-        scope: flags.scope,
-        classification: flags.classification,
-      });
-      return success({
-        query: flags._positional,
-        mode,
-        hits: hits.map((h) => ({
-          id: h.id,
-          name: h.name,
-          mimeType: h.mimeType,
-          path: h.path,
-          score: h.score,
-          classification: h.classification,
-        })),
-      });
-    }
+      const scopeSet = flags.scope ? descendants(graph, flags.scope) : null;
 
-    // Name-mode fallback (Stage 4).
-    const query = flags._positional.toLowerCase();
-    const graph = hydrateGraph(store);
-    const scopeSet = flags.scope ? descendants(graph, flags.scope) : null;
+      const rows = store.searchByName(query, flags.classification ?? undefined);
 
-    const sql = flags.classification
-      ? 'SELECT id, name, mime_type, parent_id, classification FROM nodes WHERE LOWER(name) LIKE ? AND classification = ?'
-      : 'SELECT id, name, mime_type, parent_id, classification FROM nodes WHERE LOWER(name) LIKE ?';
-    const stmt = store.db.prepare(sql);
-    const rows = (
-      flags.classification
-        ? stmt.all(`%${query}%`, flags.classification)
-        : stmt.all(`%${query}%`)
-    ) as NodeRow[];
+      const hits: FileSearchHit[] = rows
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          mimeType: r.mimeType,
+          path: nodePath(graph, r.id),
+          score: null as number | null,
+          classification: r.classification,
+        }))
+        .filter((h) => (scopeSet ? scopeSet.has(h.id) : true))
+        .sort((a, b) => {
+          const aExact = a.name.toLowerCase() === query;
+          const bExact = b.name.toLowerCase() === query;
+          if (aExact !== bExact) return aExact ? -1 : 1;
+          if (a.name.length !== b.name.length)
+            return a.name.length - b.name.length;
+          return a.name.localeCompare(b.name);
+        })
+        .slice(0, limit);
 
-    const hits: FileSearchHit[] = rows
-      .map((r) => ({
-        id: r.id,
-        name: r.name,
-        mimeType: r.mime_type,
-        path: nodePath(graph, r.id),
-        score: null as number | null,
-        classification: r.classification,
-        _exact: r.name.toLowerCase() === query,
-        _len: r.name.length,
-      }))
-      .filter((h) => (scopeSet ? scopeSet.has(h.id) : true))
-      .sort((a, b) => {
-        if (a._exact !== b._exact) return a._exact ? -1 : 1;
-        if (a._len !== b._len) return a._len - b._len;
-        return a.name.localeCompare(b.name);
-      })
-      .slice(0, limit)
-      .map(({ _exact: _e, _len: _l, ...rest }) => rest);
-
-    return success({ query: flags._positional, mode: 'name', hits });
+      return success({ query: flags._positional!, mode: 'name', hits });
+    });
   } catch (err) {
     return toResponse(err);
-  } finally {
-    store?.close();
   }
 }
 

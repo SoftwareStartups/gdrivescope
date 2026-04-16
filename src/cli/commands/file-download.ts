@@ -1,8 +1,7 @@
 import { ensureScope, SCOPE_READONLY } from '../../auth/scopes.js';
 import { createDriveClient } from '../../drive/client.js';
 import { downloadToFile } from '../../drive/download.js';
-import type { Node } from '../../graph/model.js';
-import { openStore } from '../../graph/store.js';
+import { withStore } from '../../graph/store.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
 import { getDbPath } from '../../utils/config.js';
@@ -55,13 +54,9 @@ export async function run(
   }
   try {
     await ensureScope(SCOPE_READONLY);
-    const store = openStore(getDbPath());
-    let row: Node | null;
-    try {
-      row = store.getNode(flags._positional);
-    } finally {
-      store.close();
-    }
+    const row = withStore(getDbPath(), (store) =>
+      store.getNode(flags._positional!)
+    );
     if (!row) {
       throw new CliError(
         `No node ${flags._positional}. Run \`gdrivescope index\` first.`,

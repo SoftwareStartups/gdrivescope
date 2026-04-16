@@ -19,6 +19,14 @@ export interface SummaryUpdate {
   contentHash: string;
 }
 
+export interface NodeNameSearchRow {
+  id: string;
+  name: string;
+  mimeType: string;
+  parentId: string | null;
+  classification: string | null;
+}
+
 export interface InitVectorTableOptions {
   rebuild?: boolean;
 }
@@ -35,6 +43,7 @@ export interface Store {
   getMeta(key: string): string | null;
   updateSummary(id: string, patch: SummaryUpdate): void;
   recordError(id: string, message: string): void;
+  searchByName(query: string, classification?: string): NodeNameSearchRow[];
   deleteNodes(ids: readonly string[]): void;
   initVectorTable(dimensions: number, opts?: InitVectorTableOptions): void;
   upsertEmbedding(nodeId: string, vector: Float32Array): void;
@@ -212,6 +221,12 @@ export function openStore(path: string): Store {
     'UPDATE nodes SET last_error = ? WHERE id = ?'
   );
   const deleteNodeStmt = db.prepare('DELETE FROM nodes WHERE id = ?');
+  const searchByNameStmt = db.prepare(
+    'SELECT id, name, mime_type, parent_id, classification FROM nodes WHERE LOWER(name) LIKE ?'
+  );
+  const searchByNameClassStmt = db.prepare(
+    'SELECT id, name, mime_type, parent_id, classification FROM nodes WHERE LOWER(name) LIKE ? AND classification = ?'
+  );
 
   const existing = getMetaStmt.get('schema_version') as MetaRow | null;
   if (!existing) {
@@ -336,6 +351,27 @@ export function openStore(path: string): Store {
     recordError(id: string, message: string): void {
       recordErrorStmt.run(message, id);
     },
+    searchByName(query: string, classification?: string): NodeNameSearchRow[] {
+      interface Row {
+        id: string;
+        name: string;
+        mime_type: string;
+        parent_id: string | null;
+        classification: string | null;
+      }
+      const rows = (
+        classification
+          ? searchByNameClassStmt.all(`%${query}%`, classification)
+          : searchByNameStmt.all(`%${query}%`)
+      ) as Row[];
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        mimeType: r.mime_type,
+        parentId: r.parent_id,
+        classification: r.classification,
+      }));
+    },
     deleteNodes(ids: readonly string[]): void {
       if (ids.length === 0) return;
       const hasEmbeddings = hasVec();
@@ -371,4 +407,25 @@ export function openStore(path: string): Store {
       db.close();
     },
   };
+}
+
+export function withStore<T>(path: string, fn: (store: Store) => T): T {
+  const store = openStore(path);
+  try {
+    return fn(store);
+  } finally {
+    store.close();
+  }
+}
+
+export async function withStoreAsync<T>(
+  path: string,
+  fn: (store: Store) => Promise<T>
+): Promise<T> {
+  const store = openStore(path);
+  try {
+    return await fn(store);
+  } finally {
+    store.close();
+  }
 }
