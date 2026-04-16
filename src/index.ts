@@ -19,6 +19,7 @@ Commands:
   config list-roots    List configured root folders
   config add-root      Persist a Drive folder as a root
   config remove-root   Remove a configured root
+  ollama setup         Configure local Ollama for gdrivescope
   file list            List files under a folder from the indexed graph
   file show            Show a single node from the indexed graph
   file search          Search the indexed graph by file name
@@ -52,6 +53,10 @@ export async function main(argv: string[]): Promise<number> {
       provider: { type: 'string' },
       'embedding-provider': { type: 'string' },
       'rebuild-embeddings': { type: 'boolean' },
+      host: { type: 'string' },
+      'llm-model': { type: 'string' },
+      'embedding-model': { type: 'string' },
+      'skip-pull': { type: 'boolean' },
       'max-size': { type: 'string' },
       'max-pdf-pages': { type: 'string' },
       recursive: { type: 'boolean', short: 'r' },

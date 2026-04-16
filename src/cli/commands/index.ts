@@ -89,8 +89,8 @@ Options:
   --concurrency-llm <N>        Max parallel LLM/embedding calls (default 4)
   --resume                     Only process nodes without a summary or with a recorded error
   --prune                      Delete store rows for files no longer visible in Drive (scoped)
-  --provider <NAME>            LLM provider: anthropic (default) | openai
-  --embedding-provider <NAME>  Embedding provider: openai (default) | voyage
+  --provider <NAME>            LLM provider: anthropic (default) | openai | ollama
+  --embedding-provider <NAME>  Embedding provider: openai (default) | voyage | ollama
   --rebuild-embeddings         Drop + recreate the vector table at the current provider's dimension
   --max-size <BYTES>           Skip files larger than this (default 20971520 = 20MB)
   --max-pdf-pages <N>          Slice PDFs to first N pages before extraction (default 10)
@@ -102,6 +102,10 @@ Environment:
   VOYAGE_API_KEY                   Required for --embedding-provider voyage
   GDRIVESCOPE_LLM_PROVIDER         Default LLM provider (flag > env > config > anthropic)
   GDRIVESCOPE_EMBEDDING_PROVIDER   Default embedding provider (flag > env > config > openai)
+  GDRIVESCOPE_OLLAMA_HOST          Ollama base URL (default http://localhost:11434)
+  GDRIVESCOPE_OLLAMA_MODEL         Ollama chat model (default llama3.2:3b-instruct)
+  GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL       Ollama embedding model (default nomic-embed-text)
+  GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS  Ollama embedding vector size (default 768)
   GDRIVESCOPE_MAX_SIZE             Default --max-size value
   GDRIVESCOPE_MAX_PDF_PAGES        Default --max-pdf-pages value
 `;
@@ -171,12 +175,14 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       : resolveLlmProvider({
           flagProvider: flags.provider,
           configProvider: cfg.llm?.provider,
+          ollamaConfig: cfg.ollama,
         });
     const embedding = metadataOnly
       ? null
       : resolveEmbeddingProvider({
           flagProvider: flags['embedding-provider'],
           configProvider: cfg.embedding?.provider,
+          ollamaConfig: cfg.ollama,
         });
 
     const configuredRoots: ConfigRoot[] = flags.root

@@ -1,5 +1,7 @@
+import type { OllamaConfig } from '../config/workspace.js';
 import { CliError } from '../utils/errors.js';
 import type { EmbeddingProvider } from './embedding-provider.js';
+import { OllamaEmbeddingProvider } from './ollama-embedding.js';
 import { OpenaiEmbeddingProvider } from './openai-embedding.js';
 import { VoyageEmbeddingProvider } from './voyage-embedding.js';
 
@@ -8,6 +10,7 @@ export type EmbeddingProviderName = 'openai' | 'voyage' | 'ollama';
 export interface ResolveEmbeddingOptions {
   flagProvider?: string;
   configProvider?: string;
+  ollamaConfig?: OllamaConfig;
 }
 
 const KNOWN: ReadonlySet<EmbeddingProviderName> = new Set([
@@ -59,9 +62,18 @@ export function resolveEmbeddingProvider(
     return new VoyageEmbeddingProvider(key);
   }
 
-  // name === 'ollama' — overlay plan in docs/plans/ollama-provider.md replaces this.
-  throw new CliError(
-    'Ollama embedding provider is not compiled into this build. See docs/plans/ollama-provider.md.',
-    'PROVIDER_UNAVAILABLE'
-  );
+  // name === 'ollama' — no API key required, local service
+  const host =
+    Bun.env.GDRIVESCOPE_OLLAMA_HOST ??
+    opts.ollamaConfig?.host ??
+    'http://localhost:11434';
+  const model =
+    Bun.env.GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL ??
+    opts.ollamaConfig?.embeddingModel ??
+    'nomic-embed-text';
+  const dimensions =
+    Number(Bun.env.GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS) ||
+    opts.ollamaConfig?.embeddingDimensions ||
+    768;
+  return new OllamaEmbeddingProvider({ host, model, dimensions });
 }

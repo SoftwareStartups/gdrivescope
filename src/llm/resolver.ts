@@ -1,5 +1,7 @@
+import type { OllamaConfig } from '../config/workspace.js';
 import { CliError } from '../utils/errors.js';
 import { AnthropicProvider } from './anthropic.js';
+import { OllamaProvider } from './ollama.js';
 import { OpenaiProvider } from './openai.js';
 import type { LlmProvider } from './provider.js';
 
@@ -8,6 +10,7 @@ export type LlmProviderName = 'anthropic' | 'openai' | 'ollama';
 export interface ResolveLlmOptions {
   flagProvider?: string;
   configProvider?: string;
+  ollamaConfig?: OllamaConfig;
 }
 
 const KNOWN: ReadonlySet<LlmProviderName> = new Set([
@@ -54,9 +57,14 @@ export function resolveLlmProvider(opts: ResolveLlmOptions): LlmProvider {
     return new OpenaiProvider(key);
   }
 
-  // name === 'ollama' — overlay plan in docs/plans/ollama-provider.md replaces this.
-  throw new CliError(
-    'Ollama provider is not compiled into this build. See docs/plans/ollama-provider.md.',
-    'PROVIDER_UNAVAILABLE'
-  );
+  // name === 'ollama' — no API key required, local service
+  const host =
+    Bun.env.GDRIVESCOPE_OLLAMA_HOST ??
+    opts.ollamaConfig?.host ??
+    'http://localhost:11434';
+  const model =
+    Bun.env.GDRIVESCOPE_OLLAMA_MODEL ??
+    opts.ollamaConfig?.llmModel ??
+    'llama3.2:3b-instruct';
+  return new OllamaProvider({ host, model });
 }

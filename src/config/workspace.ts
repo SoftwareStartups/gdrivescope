@@ -16,6 +16,13 @@ export interface EmbeddingConfig {
   provider?: string;
 }
 
+export interface OllamaConfig {
+  host?: string;
+  llmModel?: string;
+  embeddingModel?: string;
+  embeddingDimensions?: number;
+}
+
 export interface ExtractionConfig {
   maxSizeBytes?: number;
   maxPdfPages?: number;
@@ -27,6 +34,7 @@ export interface WorkspaceConfig {
   llm?: LlmConfig;
   embedding?: EmbeddingConfig;
   extraction?: ExtractionConfig;
+  ollama?: OllamaConfig;
 }
 
 export const EMPTY_WORKSPACE_CONFIG: WorkspaceConfig = Object.freeze({
@@ -78,6 +86,18 @@ function parseEmbedding(raw: unknown): EmbeddingConfig | undefined {
   return provider ? { provider } : undefined;
 }
 
+function parseOllama(raw: unknown): OllamaConfig | undefined {
+  if (!isStringRecord(raw)) return undefined;
+  const out: OllamaConfig = {};
+  if (typeof raw.host === 'string') out.host = raw.host;
+  if (typeof raw.llm_model === 'string') out.llmModel = raw.llm_model;
+  if (typeof raw.embedding_model === 'string')
+    out.embeddingModel = raw.embedding_model;
+  if (typeof raw.embedding_dimensions === 'number')
+    out.embeddingDimensions = raw.embedding_dimensions;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function parseExtraction(raw: unknown): ExtractionConfig | undefined {
   if (!isStringRecord(raw)) return undefined;
   const out: ExtractionConfig = {};
@@ -113,6 +133,8 @@ export async function loadWorkspaceConfig(
   if (embedding) cfg.embedding = embedding;
   const extraction = parseExtraction(parsed.extraction);
   if (extraction) cfg.extraction = extraction;
+  const ollama = parseOllama(parsed.ollama);
+  if (ollama) cfg.ollama = ollama;
   return cfg;
 }
 
@@ -146,6 +168,16 @@ export async function saveWorkspaceConfig(
       e.max_pdf_pages = cfg.extraction.maxPdfPages;
     }
     if (Object.keys(e).length > 0) payload.extraction = e;
+  }
+  if (cfg.ollama) {
+    const o: Record<string, unknown> = {};
+    if (cfg.ollama.host !== undefined) o.host = cfg.ollama.host;
+    if (cfg.ollama.llmModel !== undefined) o.llm_model = cfg.ollama.llmModel;
+    if (cfg.ollama.embeddingModel !== undefined)
+      o.embedding_model = cfg.ollama.embeddingModel;
+    if (cfg.ollama.embeddingDimensions !== undefined)
+      o.embedding_dimensions = cfg.ollama.embeddingDimensions;
+    if (Object.keys(o).length > 0) payload.ollama = o;
   }
   const body =
     Object.keys(payload).length === 0

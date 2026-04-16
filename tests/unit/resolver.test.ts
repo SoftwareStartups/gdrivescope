@@ -7,6 +7,8 @@ const guard = useEnvGuard([
   'GDRIVESCOPE_LLM_PROVIDER',
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
+  'GDRIVESCOPE_OLLAMA_HOST',
+  'GDRIVESCOPE_OLLAMA_MODEL',
 ]);
 
 describe('resolveLlmProvider', () => {
@@ -72,14 +74,9 @@ describe('resolveLlmProvider', () => {
     }
   });
 
-  test('ollama is reported unavailable until overlay lands', () => {
-    try {
-      resolveLlmProvider({ flagProvider: 'ollama' });
-      throw new Error('should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(CliError);
-      expect((err as CliError).code).toBe('PROVIDER_UNAVAILABLE');
-    }
+  test('ollama resolves without API key', () => {
+    const p = resolveLlmProvider({ flagProvider: 'ollama' });
+    expect(p.name).toBe('ollama');
   });
 
   test('provider name comparison is case-insensitive', () => {

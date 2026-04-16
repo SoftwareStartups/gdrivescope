@@ -113,6 +113,43 @@ describe('workspace config', () => {
     expect(findRoot(cfg, 'B')).toBeUndefined();
   });
 
+  test('save + load round-trips ollama config', async () => {
+    const input: WorkspaceConfig = {
+      roots: [],
+      folders: {},
+      ollama: {
+        host: 'http://localhost:11434',
+        llmModel: 'llama3.2:3b-instruct',
+        embeddingModel: 'nomic-embed-text',
+        embeddingDimensions: 768,
+      },
+    };
+    await saveWorkspaceConfig(input, configPath);
+    const loaded = await loadWorkspaceConfig(configPath);
+    expect(loaded.ollama).toEqual(input.ollama);
+  });
+
+  test('missing ollama section returns undefined', async () => {
+    await saveWorkspaceConfig({ roots: [], folders: {} }, configPath);
+    const loaded = await loadWorkspaceConfig(configPath);
+    expect(loaded.ollama).toBeUndefined();
+  });
+
+  test('partial ollama section is parsed correctly', async () => {
+    const body = `# gdrivescope config
+
+[ollama]
+host = "http://custom:1234"
+embedding_dimensions = 1024
+`;
+    await Bun.write(configPath, body);
+    const loaded = await loadWorkspaceConfig(configPath);
+    expect(loaded.ollama?.host).toBe('http://custom:1234');
+    expect(loaded.ollama?.embeddingDimensions).toBe(1024);
+    expect(loaded.ollama?.llmModel).toBeUndefined();
+    expect(loaded.ollama?.embeddingModel).toBeUndefined();
+  });
+
   test('malformed TOML entries are skipped rather than throwing', async () => {
     const body = `# gdrivescope config
 

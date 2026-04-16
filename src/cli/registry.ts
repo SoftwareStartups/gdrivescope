@@ -11,6 +11,7 @@ import * as fileShowCmd from './commands/file-show.js';
 import * as indexCmd from './commands/index.js';
 import * as loginCmd from './commands/login.js';
 import * as logoutCmd from './commands/logout.js';
+import * as ollamaSetupCmd from './commands/ollama-setup.js';
 
 export interface GlobalFlags {
   json: boolean;
@@ -99,6 +100,17 @@ export const registry: Record<string, Record<string, Command>> = {
       configRemoveRootCmd.HELP,
       configRemoveRootCmd.run,
       configRemoveRootCmd.render
+    ),
+  },
+  ollama: {
+    setup: wrap<
+      ollamaSetupCmd.OllamaSetupData,
+      ollamaSetupCmd.OllamaSetupFlags
+    >(
+      'Configure local Ollama for gdrivescope',
+      ollamaSetupCmd.HELP,
+      ollamaSetupCmd.run,
+      ollamaSetupCmd.render
     ),
   },
   file: {

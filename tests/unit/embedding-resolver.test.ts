@@ -7,6 +7,9 @@ const guard = useEnvGuard([
   'GDRIVESCOPE_EMBEDDING_PROVIDER',
   'OPENAI_API_KEY',
   'VOYAGE_API_KEY',
+  'GDRIVESCOPE_OLLAMA_HOST',
+  'GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL',
+  'GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS',
 ]);
 
 describe('resolveEmbeddingProvider', () => {
@@ -74,14 +77,10 @@ describe('resolveEmbeddingProvider', () => {
     }
   });
 
-  test('ollama is reported unavailable until overlay lands', () => {
-    try {
-      resolveEmbeddingProvider({ flagProvider: 'ollama' });
-      throw new Error('should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(CliError);
-      expect((err as CliError).code).toBe('PROVIDER_UNAVAILABLE');
-    }
+  test('ollama resolves without API key', () => {
+    const p = resolveEmbeddingProvider({ flagProvider: 'ollama' });
+    expect(p.name).toBe('ollama');
+    expect(p.dimensions).toBe(768);
   });
 
   test('provider name comparison is case-insensitive', () => {
