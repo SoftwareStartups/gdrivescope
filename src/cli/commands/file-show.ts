@@ -62,14 +62,12 @@ export async function run(
       new CliError('Usage: gdrivescope file show <ID>', 'MISSING_ARG')
     );
   }
+  const positional = flags._positional;
   try {
     return await withStoreAsync(getDbPath(), async (store) => {
-      const row = store.getNode(flags._positional!);
+      const row = store.getNode(positional);
       if (!row) {
-        throw new CliError(
-          `No node ${flags._positional} in index.`,
-          'NODE_NOT_FOUND'
-        );
+        throw new CliError(`No node ${positional} in index.`, 'NODE_NOT_FOUND');
       }
       const graph = hydrateGraph(store);
       return success({ node: toShowNode(row), path: nodePath(graph, row.id) });

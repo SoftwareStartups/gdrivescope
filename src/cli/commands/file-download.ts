@@ -52,14 +52,13 @@ export async function run(
       new CliError('Usage: gdrivescope file download <ID>', 'MISSING_ARG')
     );
   }
+  const positional = flags._positional;
   try {
     await ensureScope(SCOPE_READONLY);
-    const row = withStore(getDbPath(), (store) =>
-      store.getNode(flags._positional!)
-    );
+    const row = withStore(getDbPath(), (store) => store.getNode(positional));
     if (!row) {
       throw new CliError(
-        `No node ${flags._positional}. Run \`gdrivescope index\` first.`,
+        `No node ${positional}. Run \`gdrivescope index\` first.`,
         'NODE_NOT_FOUND'
       );
     }

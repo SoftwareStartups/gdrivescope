@@ -81,6 +81,7 @@ export async function run(
       new CliError('Usage: gdrivescope file search <QUERY>', 'MISSING_ARG')
     );
   }
+  const positional = flags._positional;
   try {
     return await withStoreAsync(getDbPath(), async (store) => {
       const hasEmbeddings = store.hasVectorTable();
@@ -102,7 +103,7 @@ export async function run(
         });
         const graph = hydrateGraph(store);
         const hits = await semanticSearch({
-          query: flags._positional!,
+          query: positional,
           provider,
           store,
           graph,
@@ -112,7 +113,7 @@ export async function run(
           classification: flags.classification,
         });
         return success({
-          query: flags._positional!,
+          query: positional,
           mode,
           hits: hits.map((h) => ({
             id: h.id,
@@ -126,7 +127,7 @@ export async function run(
       }
 
       // Name-mode fallback.
-      const query = flags._positional!.toLowerCase();
+      const query = positional.toLowerCase();
       const graph = hydrateGraph(store);
       const scopeSet = flags.scope ? descendants(graph, flags.scope) : null;
 
@@ -152,7 +153,7 @@ export async function run(
         })
         .slice(0, limit);
 
-      return success({ query: flags._positional!, mode: 'name', hits });
+      return success({ query: positional, mode: 'name', hits });
     });
   } catch (err) {
     return toResponse(err);
