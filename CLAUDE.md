@@ -11,8 +11,19 @@ Bun-native TypeScript CLI for Google Drive. Traverses folders into a directed gr
 | `ANTHROPIC_API_KEY` | Anthropic LLM provider |
 | `OPENAI_API_KEY` | OpenAI LLM / embedding provider |
 | `VOYAGE_API_KEY` | Voyage embedding provider |
-| `GDRIVESCOPE_LLM_PROVIDER` | `anthropic` \| `openai` \| `ollama` |
-| `GDRIVESCOPE_EMBEDDING_PROVIDER` | `openai` \| `voyage` \| `ollama` |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint |
+| `AZURE_OPENAI_API_VERSION` | Azure OpenAI API version (default `2024-06-01`) |
+| `AZURE_OPENAI_LLM_DEPLOYMENT` | Azure deployment name for LLM |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Azure deployment name for embeddings |
+| `GDRIVESCOPE_LLM_PROVIDER` | `anthropic` \| `openai` \| `azure-openai` \| `ollama` |
+| `GDRIVESCOPE_EMBEDDING_PROVIDER` | `openai` \| `azure-openai` \| `voyage` \| `ollama` |
+| `GDRIVESCOPE_ANTHROPIC_MODEL` | Anthropic LLM model override |
+| `GDRIVESCOPE_OPENAI_MODEL` | OpenAI LLM model override |
+| `GDRIVESCOPE_AZURE_OPENAI_MODEL` | Azure OpenAI LLM model override |
+| `GDRIVESCOPE_OPENAI_EMBEDDING_MODEL` | OpenAI embedding model override |
+| `GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_MODEL` | Azure OpenAI embedding model override |
+| `GDRIVESCOPE_VOYAGE_MODEL` | Voyage embedding model override |
 | `GDRIVESCOPE_OLLAMA_HOST` | Ollama base URL (default `http://localhost:11434`) |
 | `GDRIVESCOPE_OLLAMA_MODEL` | Ollama chat model |
 | `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL` | Ollama embedding model |

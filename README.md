@@ -12,8 +12,8 @@ Key features:
 - BFS traversal of Drive folder trees with bounded-parallel API calls
 - Content extraction to markdown via Kreuzberg (PDF, Office, and 50+ formats)
 - Google Workspace files (Docs, Sheets, Slides) exported server-side as text/CSV
-- Summarization and classification via Anthropic or OpenAI
-- Vector embeddings (OpenAI or Voyage) stored in sqlite-vec for semantic search
+- Summarization and classification via Anthropic, OpenAI, or Azure OpenAI
+- Vector embeddings (OpenAI, Azure OpenAI, or Voyage) stored in sqlite-vec for semantic search
 - Single standalone binary (requires system SQLite with extension support — see [Prerequisites](#prerequisites))
 
 ## Prerequisites
@@ -213,7 +213,7 @@ label = "Team Drive"
 
 ## Index flags
 
-```
+```text
 --scope <FOLDER_ID>          Start folder (default: configured root)
 --root <FOLDER_ID>           One-shot root override (bypasses config.toml)
 --add-root                   Persist the resolved root to config.toml
@@ -223,8 +223,8 @@ label = "Team Drive"
 --concurrency-drive <N>      Max parallel Drive API calls (default 15)
 --concurrency-llm <N>        Max parallel LLM/embedding API calls (default 4)
 --concurrency <N>            Shorthand for --concurrency-drive
---provider <NAME>            LLM provider: anthropic | openai
---embedding-provider <NAME>  Embedding provider: openai | voyage
+--provider <NAME>            LLM provider: anthropic | openai | azure-openai | ollama
+--embedding-provider <NAME>  Embedding provider: openai | azure-openai | voyage | ollama
 --rebuild-embeddings         Drop + recreate the vector table
 --max-size <BYTES>           Skip files larger than this (default 20 MB)
 --max-pdf-pages <N>          Slice PDFs to first N pages (default 10)
@@ -258,15 +258,17 @@ gdrivescope index --scope <FOLDER_ID>
 
 gdrivescope uses two separate providers: an **LLM provider** for summarization and classification, and an **embedding provider** for vector search. Each is resolved independently through the same cascade:
 
-**CLI flag → environment variable → config.toml → hardcoded default**
+**CLI flag → environment variable → config.toml → auto-inference from API keys**
+
+When no provider is explicitly configured, gdrivescope scans available API keys and auto-selects the first viable provider. LLM priority: Anthropic → OpenAI → Azure OpenAI → Ollama. Embedding priority: OpenAI → Azure OpenAI → Voyage → Ollama.
 
 | | LLM (summarization) | Embedding (vector search) |
 |---|---|---|
-| **Available** | `anthropic`, `openai` | `openai`, `voyage` |
-| **Default** | `anthropic` | `openai` |
+| **Available** | `anthropic`, `openai`, `azure-openai`, `ollama` | `openai`, `azure-openai`, `voyage`, `ollama` |
 | **CLI flag** | `--provider` | `--embedding-provider` |
 | **Env var** | `GDRIVESCOPE_LLM_PROVIDER` | `GDRIVESCOPE_EMBEDDING_PROVIDER` |
 | **Config key** | `[llm] provider` | `[embedding] provider` |
+| **Config model** | `[llm] model` | `[embedding] model` |
 
 ### API keys by scenario
 
@@ -274,10 +276,39 @@ gdrivescope uses two separate providers: an **LLM provider** for summarization a
 |---|---|
 | Login | None (Google OAuth credentials resolved via flags / env / keychain / prompt) |
 | Metadata-only index | None |
-| Full index (defaults) | `ANTHROPIC_API_KEY` + `OPENAI_API_KEY` |
+| Full index (Anthropic + OpenAI) | `ANTHROPIC_API_KEY` + `OPENAI_API_KEY` |
 | Full index (OpenAI for both) | `OPENAI_API_KEY` |
 | Full index (Anthropic + Voyage) | `ANTHROPIC_API_KEY` + `VOYAGE_API_KEY` |
+| Full index (Azure OpenAI) | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` |
 | Semantic search | Same embedding provider key used during indexing |
+
+### Azure OpenAI
+
+For corporate environments using Azure OpenAI:
+
+```bash
+export AZURE_OPENAI_API_KEY="your-key"
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
+gdrivescope index --scope <FOLDER_ID> --provider azure-openai --embedding-provider azure-openai
+```
+
+Optional: set deployment names and API version via environment variables or config.toml:
+
+```bash
+export AZURE_OPENAI_LLM_DEPLOYMENT="gpt-4"
+export AZURE_OPENAI_EMBEDDING_DEPLOYMENT="text-embedding-3-small"
+export AZURE_OPENAI_API_VERSION="2024-06-01"
+```
+
+Or in config.toml:
+
+```toml
+[azure]
+endpoint = "https://your-resource.openai.azure.com"
+api_version = "2024-06-01"
+llm_deployment = "gpt-4"
+embedding_deployment = "text-embedding-3-small"
+```
 
 ### Switching embedding providers
 
@@ -304,16 +335,21 @@ If you switch embedding providers (e.g. from OpenAI to Voyage), the vector dimen
 
 | Variable | Required when |
 |---|---|
-| `ANTHROPIC_API_KEY` | Using `anthropic` LLM provider (default) |
-| `OPENAI_API_KEY` | Using `openai` LLM provider or `openai` embedding provider (default) |
+| `ANTHROPIC_API_KEY` | Using `anthropic` LLM provider |
+| `OPENAI_API_KEY` | Using `openai` LLM provider or `openai` embedding provider |
 | `VOYAGE_API_KEY` | Using `voyage` embedding provider |
+| `AZURE_OPENAI_API_KEY` | Using `azure-openai` LLM or embedding provider |
+| `AZURE_OPENAI_ENDPOINT` | Using `azure-openai` provider (resource endpoint) |
+| `AZURE_OPENAI_API_VERSION` | Azure API version override (default `2024-06-01`) |
+| `AZURE_OPENAI_LLM_DEPLOYMENT` | Azure deployment name for LLM |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Azure deployment name for embeddings |
 
 ### Defaults and overrides
 
 | Variable | Purpose |
 |---|---|
-| `GDRIVESCOPE_LLM_PROVIDER` | Default LLM provider (`anthropic` or `openai`) |
-| `GDRIVESCOPE_EMBEDDING_PROVIDER` | Default embedding provider (`openai` or `voyage`) |
+| `GDRIVESCOPE_LLM_PROVIDER` | Default LLM provider (`anthropic`, `openai`, `azure-openai`, `ollama`) |
+| `GDRIVESCOPE_EMBEDDING_PROVIDER` | Default embedding provider (`openai`, `azure-openai`, `voyage`, `ollama`) |
 | `GDRIVESCOPE_SQLITE_LIB` | Custom path to a SQLite library with extension support |
 | `GDRIVESCOPE_MAX_SIZE` | Default `--max-size` value (bytes) |
 | `GDRIVESCOPE_MAX_PDF_PAGES` | Default `--max-pdf-pages` value |
@@ -326,14 +362,22 @@ Workspace config lives at `~/.config/gdrivescope/config.toml`:
 
 ```toml
 [llm]
-provider = "anthropic"      # anthropic | openai
+provider = "anthropic"      # anthropic | openai | azure-openai | ollama
+model = "claude-sonnet-4-6" # optional model override
 
 [embedding]
-provider = "openai"         # openai | voyage
+provider = "openai"         # openai | azure-openai | voyage | ollama
+model = "text-embedding-3-small"
+
+[azure]
+endpoint = "https://your-resource.openai.azure.com"
+api_version = "2024-06-01"
+llm_deployment = "gpt-4"
+embedding_deployment = "text-embedding-3-small"
 
 [extraction]
-maxSizeBytes = 20971520     # 20 MB
-maxPdfPages = 10
+max_size_bytes = 20971520   # 20 MB
+max_pdf_pages = 10
 
 [[roots]]
 id = "1ABC..."
@@ -350,7 +394,7 @@ Manage roots via `gdrivescope config add-root` / `config remove-root`.
 
 **Kreuzberg extraction failures** — Kreuzberg uses NAPI bindings for PDF/Office extraction. If they fail at runtime (e.g. on a musl-based Linux or inside a stripped container), the tool falls back to `@kreuzberg/wasm`. If both fail, the file is skipped with an error recorded in `last_error`.
 
-**Provider selection** — The LLM provider resolves in order: `--provider` flag > `GDRIVESCOPE_LLM_PROVIDER` env > `config.toml [llm].provider` > `anthropic`. Embedding provider follows the same cascade defaulting to `openai`.
+**Provider selection** — The LLM provider resolves in order: `--provider` flag > `GDRIVESCOPE_LLM_PROVIDER` env > `config.toml [llm].provider` > auto-infer from available API keys. Embedding provider follows the same cascade. If no provider is explicitly configured, gdrivescope scans for available API keys and selects the first match.
 
 **Rebuild embeddings** — If you switch embedding providers (e.g. from OpenAI to Voyage), the vector dimensions change. Pass `--rebuild-embeddings` on the next full index run to drop and recreate the vector table.
 

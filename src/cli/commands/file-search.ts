@@ -55,13 +55,15 @@ Options:
   --scope <FOLDER_ID>          Restrict to descendants of a folder
   --limit <N>                  Max hits (default 20)
   --threshold <X>              Minimum cosine similarity (semantic only)
-  --embedding-provider <NAME>  Embedding provider: openai (default) | voyage
+  --embedding-provider <NAME>  Embedding provider: openai | azure-openai | voyage | ollama
   --json                       Emit JSON envelope
 
 Environment:
   OPENAI_API_KEY                  Required for semantic search with openai
+  AZURE_OPENAI_API_KEY            Required for semantic search with azure-openai
+  AZURE_OPENAI_ENDPOINT           Required for semantic search with azure-openai
   VOYAGE_API_KEY                  Required for semantic search with voyage
-  GDRIVESCOPE_EMBEDDING_PROVIDER  Default embedding provider
+  GDRIVESCOPE_EMBEDDING_PROVIDER  Default embedding provider (auto-inferred if not set)
 `;
 
 function parseThreshold(value: string | undefined): number | undefined {
@@ -100,6 +102,9 @@ export async function run(
         const provider = resolveEmbeddingProvider({
           flagProvider: flags['embedding-provider'],
           configProvider: cfg.embedding?.provider,
+          configModel: cfg.embedding?.model,
+          ollamaConfig: cfg.ollama,
+          azureConfig: cfg.azure,
         });
         const graph = hydrateGraph(store);
         const hits = await semanticSearch({

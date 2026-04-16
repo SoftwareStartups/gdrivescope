@@ -89,8 +89,8 @@ Options:
   --concurrency-llm <N>        Max parallel LLM/embedding calls (default 4)
   --resume                     Only process nodes without a summary or with a recorded error
   --prune                      Delete store rows for files no longer visible in Drive (scoped)
-  --provider <NAME>            LLM provider: anthropic (default) | openai | ollama
-  --embedding-provider <NAME>  Embedding provider: openai (default) | voyage | ollama
+  --provider <NAME>            LLM provider: anthropic | openai | azure-openai | ollama
+  --embedding-provider <NAME>  Embedding provider: openai | azure-openai | voyage | ollama
   --rebuild-embeddings         Drop + recreate the vector table at the current provider's dimension
   --max-size <BYTES>           Skip files larger than this (default 20971520 = 20MB)
   --max-pdf-pages <N>          Slice PDFs to first N pages before extraction (default 10)
@@ -98,10 +98,12 @@ Options:
 
 Environment:
   ANTHROPIC_API_KEY                Required for --provider anthropic
-  OPENAI_API_KEY                   Required for --provider openai and default --embedding-provider openai
+  OPENAI_API_KEY                   Required for --provider openai and --embedding-provider openai
   VOYAGE_API_KEY                   Required for --embedding-provider voyage
-  GDRIVESCOPE_LLM_PROVIDER         Default LLM provider (flag > env > config > anthropic)
-  GDRIVESCOPE_EMBEDDING_PROVIDER   Default embedding provider (flag > env > config > openai)
+  AZURE_OPENAI_API_KEY             Required for --provider azure-openai
+  AZURE_OPENAI_ENDPOINT            Required for --provider azure-openai (resource endpoint)
+  GDRIVESCOPE_LLM_PROVIDER         Default LLM provider (flag > env > config > auto-infer)
+  GDRIVESCOPE_EMBEDDING_PROVIDER   Default embedding provider (flag > env > config > auto-infer)
   GDRIVESCOPE_OLLAMA_HOST          Ollama base URL (default http://localhost:11434)
   GDRIVESCOPE_OLLAMA_MODEL         Ollama chat model (default llama3.2:3b-instruct)
   GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL       Ollama embedding model (default nomic-embed-text)
@@ -175,14 +177,18 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       : resolveLlmProvider({
           flagProvider: flags.provider,
           configProvider: cfg.llm?.provider,
+          configModel: cfg.llm?.model,
           ollamaConfig: cfg.ollama,
+          azureConfig: cfg.azure,
         });
     const embedding = metadataOnly
       ? null
       : resolveEmbeddingProvider({
           flagProvider: flags['embedding-provider'],
           configProvider: cfg.embedding?.provider,
+          configModel: cfg.embedding?.model,
           ollamaConfig: cfg.ollama,
+          azureConfig: cfg.azure,
         });
 
     const configuredRoots: ConfigRoot[] = flags.root

@@ -7,9 +7,16 @@ const guard = useEnvGuard([
   'GDRIVESCOPE_EMBEDDING_PROVIDER',
   'OPENAI_API_KEY',
   'VOYAGE_API_KEY',
+  'AZURE_OPENAI_API_KEY',
+  'AZURE_OPENAI_ENDPOINT',
+  'AZURE_OPENAI_API_VERSION',
+  'AZURE_OPENAI_EMBEDDING_DEPLOYMENT',
   'GDRIVESCOPE_OLLAMA_HOST',
   'GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL',
   'GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS',
+  'GDRIVESCOPE_OPENAI_EMBEDDING_MODEL',
+  'GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_MODEL',
+  'GDRIVESCOPE_VOYAGE_MODEL',
 ]);
 
 describe('resolveEmbeddingProvider', () => {
@@ -87,5 +94,98 @@ describe('resolveEmbeddingProvider', () => {
     Bun.env.OPENAI_API_KEY = 'o';
     const p = resolveEmbeddingProvider({ flagProvider: 'OpenAI' });
     expect(p.name).toBe('openai');
+  });
+
+  describe('azure-openai', () => {
+    test('resolves when key and endpoint are set', () => {
+      Bun.env.AZURE_OPENAI_API_KEY = 'az-key';
+      Bun.env.AZURE_OPENAI_ENDPOINT = 'https://test.openai.azure.com';
+      const p = resolveEmbeddingProvider({ flagProvider: 'azure-openai' });
+      expect(p.name).toBe('azure-openai');
+      expect(p.dimensions).toBe(1536);
+    });
+
+    test('missing key throws PROVIDER_UNCONFIGURED', () => {
+      Bun.env.AZURE_OPENAI_ENDPOINT = 'https://test.openai.azure.com';
+      try {
+        resolveEmbeddingProvider({ flagProvider: 'azure-openai' });
+        throw new Error('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe('PROVIDER_UNCONFIGURED');
+      }
+    });
+
+    test('missing endpoint throws PROVIDER_UNCONFIGURED', () => {
+      Bun.env.AZURE_OPENAI_API_KEY = 'az-key';
+      try {
+        resolveEmbeddingProvider({ flagProvider: 'azure-openai' });
+        throw new Error('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe('PROVIDER_UNCONFIGURED');
+      }
+    });
+
+    test('endpoint from azureConfig when env not set', () => {
+      Bun.env.AZURE_OPENAI_API_KEY = 'az-key';
+      const p = resolveEmbeddingProvider({
+        flagProvider: 'azure-openai',
+        azureConfig: { endpoint: 'https://cfg.openai.azure.com' },
+      });
+      expect(p.name).toBe('azure-openai');
+    });
+  });
+
+  describe('inference', () => {
+    test('selects openai when OPENAI_API_KEY is set', () => {
+      Bun.env.OPENAI_API_KEY = 'o';
+      const p = resolveEmbeddingProvider({});
+      expect(p.name).toBe('openai');
+    });
+
+    test('selects azure-openai when only Azure keys are set', () => {
+      Bun.env.AZURE_OPENAI_API_KEY = 'az-key';
+      Bun.env.AZURE_OPENAI_ENDPOINT = 'https://test.openai.azure.com';
+      const p = resolveEmbeddingProvider({});
+      expect(p.name).toBe('azure-openai');
+    });
+
+    test('selects voyage when only VOYAGE_API_KEY is set', () => {
+      Bun.env.VOYAGE_API_KEY = 'v';
+      const p = resolveEmbeddingProvider({});
+      expect(p.name).toBe('voyage');
+    });
+
+    test('selects ollama when ollamaConfig provided and no keys', () => {
+      const p = resolveEmbeddingProvider({
+        ollamaConfig: { host: 'http://localhost:11434' },
+      });
+      expect(p.name).toBe('ollama');
+    });
+
+    test('throws when no keys and no ollamaConfig', () => {
+      try {
+        resolveEmbeddingProvider({});
+        throw new Error('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe('PROVIDER_UNCONFIGURED');
+      }
+    });
+
+    test('openai wins over voyage when both keys set', () => {
+      Bun.env.OPENAI_API_KEY = 'o';
+      Bun.env.VOYAGE_API_KEY = 'v';
+      const p = resolveEmbeddingProvider({});
+      expect(p.name).toBe('openai');
+    });
+
+    test('explicit provider skips inference', () => {
+      Bun.env.OPENAI_API_KEY = 'o';
+      Bun.env.VOYAGE_API_KEY = 'v';
+      const p = resolveEmbeddingProvider({ flagProvider: 'voyage' });
+      expect(p.name).toBe('voyage');
+    });
   });
 });

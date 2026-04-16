@@ -1,9 +1,7 @@
 import { CliError } from '../utils/errors.js';
 import type { EmbeddingProvider } from './embedding-provider.js';
 
-const MODEL = Bun.env.GDRIVESCOPE_VOYAGE_MODEL ?? 'voyage-3-lite';
 const BATCH = 128;
-const DIMENSIONS = 512;
 
 interface VoyageResponse {
   data: Array<{ embedding: number[] }>;
@@ -11,9 +9,14 @@ interface VoyageResponse {
 
 export class VoyageEmbeddingProvider implements EmbeddingProvider {
   readonly name = 'voyage';
-  readonly dimensions = DIMENSIONS;
+  readonly dimensions = 512;
+  private apiKey: string;
+  private model: string;
 
-  constructor(private apiKey: string) {}
+  constructor(opts: { apiKey: string; model?: string }) {
+    this.apiKey = opts.apiKey;
+    this.model = opts.model ?? 'voyage-3-lite';
+  }
 
   async embed(texts: string[]): Promise<number[][]> {
     const out: number[][] = [];
@@ -27,7 +30,7 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
             Authorization: `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ model: MODEL, input: batch }),
+          body: JSON.stringify({ model: this.model, input: batch }),
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

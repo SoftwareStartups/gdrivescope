@@ -5,21 +5,21 @@ import type { LlmProvider, LlmSummarizeInput, LlmSummary } from './provider.js';
 import { LLM_SUMMARY_SCHEMA } from './summary-schema.js';
 import { validateRawSummary } from './summary-parse.js';
 
-const MODEL = Bun.env.GDRIVESCOPE_ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
-
 export class AnthropicProvider implements LlmProvider {
   readonly name = 'anthropic';
   private client: Anthropic;
+  private model: string;
 
-  constructor(apiKey: string) {
-    this.client = new Anthropic({ apiKey });
+  constructor(opts: { apiKey: string; model?: string }) {
+    this.client = new Anthropic({ apiKey: opts.apiKey });
+    this.model = opts.model ?? 'claude-sonnet-4-6';
   }
 
   async summarize(input: LlmSummarizeInput): Promise<LlmSummary> {
     let response: Anthropic.Messages.Message;
     try {
       response = await this.client.messages.create({
-        model: MODEL,
+        model: this.model,
         max_tokens: 1024,
         system: [
           {

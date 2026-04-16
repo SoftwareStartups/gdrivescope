@@ -10,10 +10,12 @@ export interface ConfigRoot {
 
 export interface LlmConfig {
   provider?: string;
+  model?: string;
 }
 
 export interface EmbeddingConfig {
   provider?: string;
+  model?: string;
 }
 
 export interface OllamaConfig {
@@ -21,6 +23,13 @@ export interface OllamaConfig {
   llmModel?: string;
   embeddingModel?: string;
   embeddingDimensions?: number;
+}
+
+export interface AzureConfig {
+  endpoint?: string;
+  apiVersion?: string;
+  llmDeployment?: string;
+  embeddingDeployment?: string;
 }
 
 export interface ExtractionConfig {
@@ -35,6 +44,7 @@ export interface WorkspaceConfig {
   embedding?: EmbeddingConfig;
   extraction?: ExtractionConfig;
   ollama?: OllamaConfig;
+  azure?: AzureConfig;
 }
 
 export const EMPTY_WORKSPACE_CONFIG: WorkspaceConfig = Object.freeze({
@@ -77,13 +87,23 @@ function parseFolders(raw: unknown): Record<string, string> {
 function parseLlm(raw: unknown): LlmConfig | undefined {
   if (!isStringRecord(raw)) return undefined;
   const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
-  return provider ? { provider } : undefined;
+  const model = typeof raw.model === 'string' ? raw.model : undefined;
+  if (!provider && !model) return undefined;
+  const out: LlmConfig = {};
+  if (provider) out.provider = provider;
+  if (model) out.model = model;
+  return out;
 }
 
 function parseEmbedding(raw: unknown): EmbeddingConfig | undefined {
   if (!isStringRecord(raw)) return undefined;
   const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
-  return provider ? { provider } : undefined;
+  const model = typeof raw.model === 'string' ? raw.model : undefined;
+  if (!provider && !model) return undefined;
+  const out: EmbeddingConfig = {};
+  if (provider) out.provider = provider;
+  if (model) out.model = model;
+  return out;
 }
 
 function parseOllama(raw: unknown): OllamaConfig | undefined {
@@ -95,6 +115,18 @@ function parseOllama(raw: unknown): OllamaConfig | undefined {
     out.embeddingModel = raw.embedding_model;
   if (typeof raw.embedding_dimensions === 'number')
     out.embeddingDimensions = raw.embedding_dimensions;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function parseAzure(raw: unknown): AzureConfig | undefined {
+  if (!isStringRecord(raw)) return undefined;
+  const out: AzureConfig = {};
+  if (typeof raw.endpoint === 'string') out.endpoint = raw.endpoint;
+  if (typeof raw.api_version === 'string') out.apiVersion = raw.api_version;
+  if (typeof raw.llm_deployment === 'string')
+    out.llmDeployment = raw.llm_deployment;
+  if (typeof raw.embedding_deployment === 'string')
+    out.embeddingDeployment = raw.embedding_deployment;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -135,6 +167,8 @@ export async function loadWorkspaceConfig(
   if (extraction) cfg.extraction = extraction;
   const ollama = parseOllama(parsed.ollama);
   if (ollama) cfg.ollama = ollama;
+  const azure = parseAzure(parsed.azure);
+  if (azure) cfg.azure = azure;
   return cfg;
 }
 
@@ -153,11 +187,17 @@ export async function saveWorkspaceConfig(
   if (Object.keys(cfg.folders).length > 0) {
     payload.folders = cfg.folders;
   }
-  if (cfg.llm?.provider) {
-    payload.llm = { provider: cfg.llm.provider };
+  if (cfg.llm?.provider || cfg.llm?.model) {
+    const l: Record<string, unknown> = {};
+    if (cfg.llm.provider) l.provider = cfg.llm.provider;
+    if (cfg.llm.model) l.model = cfg.llm.model;
+    payload.llm = l;
   }
-  if (cfg.embedding?.provider) {
-    payload.embedding = { provider: cfg.embedding.provider };
+  if (cfg.embedding?.provider || cfg.embedding?.model) {
+    const e: Record<string, unknown> = {};
+    if (cfg.embedding.provider) e.provider = cfg.embedding.provider;
+    if (cfg.embedding.model) e.model = cfg.embedding.model;
+    payload.embedding = e;
   }
   if (cfg.extraction) {
     const e: Record<string, unknown> = {};
@@ -178,6 +218,17 @@ export async function saveWorkspaceConfig(
     if (cfg.ollama.embeddingDimensions !== undefined)
       o.embedding_dimensions = cfg.ollama.embeddingDimensions;
     if (Object.keys(o).length > 0) payload.ollama = o;
+  }
+  if (cfg.azure) {
+    const az: Record<string, unknown> = {};
+    if (cfg.azure.endpoint !== undefined) az.endpoint = cfg.azure.endpoint;
+    if (cfg.azure.apiVersion !== undefined)
+      az.api_version = cfg.azure.apiVersion;
+    if (cfg.azure.llmDeployment !== undefined)
+      az.llm_deployment = cfg.azure.llmDeployment;
+    if (cfg.azure.embeddingDeployment !== undefined)
+      az.embedding_deployment = cfg.azure.embeddingDeployment;
+    if (Object.keys(az).length > 0) payload.azure = az;
   }
   const body =
     Object.keys(payload).length === 0

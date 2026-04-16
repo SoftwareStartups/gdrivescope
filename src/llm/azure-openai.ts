@@ -1,17 +1,30 @@
-import OpenAI from 'openai';
+import OpenAI, { AzureOpenAI } from 'openai';
 import { CliError } from '../utils/errors.js';
 import { SUMMARY_SYSTEM, summaryUser } from './prompts.js';
 import type { LlmProvider, LlmSummarizeInput, LlmSummary } from './provider.js';
 import { LLM_SUMMARY_SCHEMA } from './summary-schema.js';
 import { validateRawSummary } from './summary-parse.js';
 
-export class OpenaiProvider implements LlmProvider {
-  readonly name = 'openai';
-  private client: OpenAI;
+export interface AzureOpenaiProviderOptions {
+  apiKey: string;
+  endpoint: string;
+  apiVersion?: string;
+  deployment?: string;
+  model?: string;
+}
+
+export class AzureOpenaiProvider implements LlmProvider {
+  readonly name = 'azure-openai';
+  private client: AzureOpenAI;
   private model: string;
 
-  constructor(opts: { apiKey: string; model?: string }) {
-    this.client = new OpenAI({ apiKey: opts.apiKey });
+  constructor(opts: AzureOpenaiProviderOptions) {
+    this.client = new AzureOpenAI({
+      apiKey: opts.apiKey,
+      endpoint: opts.endpoint,
+      apiVersion: opts.apiVersion ?? '2024-06-01',
+      deployment: opts.deployment,
+    });
     this.model = opts.model ?? 'gpt-5.4-nano';
   }
 
@@ -37,17 +50,17 @@ export class OpenaiProvider implements LlmProvider {
     } catch (err) {
       if (err instanceof OpenAI.APIError) {
         throw new CliError(
-          `OpenAI call failed (status ${err.status}): ${err.message}`,
+          `Azure OpenAI call failed (status ${err.status}): ${err.message}`,
           'LLM_CALL_FAILED'
         );
       }
       const msg = err instanceof Error ? err.message : String(err);
-      throw new CliError(`OpenAI call failed: ${msg}`, 'LLM_CALL_FAILED');
+      throw new CliError(`Azure OpenAI call failed: ${msg}`, 'LLM_CALL_FAILED');
     }
 
     if (!text) {
       throw new CliError(
-        'OpenAI returned empty content',
+        'Azure OpenAI returned empty content',
         'LLM_MALFORMED_OUTPUT'
       );
     }
@@ -57,10 +70,10 @@ export class OpenaiProvider implements LlmProvider {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new CliError(
-        `OpenAI returned invalid JSON: ${msg}`,
+        `Azure OpenAI returned invalid JSON: ${msg}`,
         'LLM_MALFORMED_OUTPUT'
       );
     }
-    return validateRawSummary('OpenAI', parsed);
+    return validateRawSummary('Azure OpenAI', parsed);
   }
 }
