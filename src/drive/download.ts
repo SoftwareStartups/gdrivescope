@@ -1,5 +1,5 @@
 import { createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs';
-import { basename, dirname, extname, join } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { drive_v3 } from '@googleapis/drive';
 import { CliError } from '../utils/errors.js';
@@ -110,6 +110,11 @@ export async function downloadToFile(
         ? `${safeName}${extension}`
         : safeName;
     outputPath = join(outputPath, withExt);
+    const resolved = resolve(outputPath);
+    const container = resolve(destPath);
+    if (!resolved.startsWith(`${container}/`) && resolved !== container) {
+      throw new CliError('Download path escapes target directory', 'BAD_ARG');
+    }
   }
   mkdirSync(dirname(outputPath), { recursive: true });
 

@@ -109,7 +109,12 @@ function rowToNode(row: NodeRow): Node {
   };
 }
 
+const KNOWN_TABLES = new Set(['nodes', 'meta', 'embeddings']);
+
 function hasColumn(db: Database, table: string, column: string): boolean {
+  if (!KNOWN_TABLES.has(table)) {
+    throw new Error(`hasColumn: unknown table "${table}"`);
+  }
   interface PragmaRow {
     name: string;
   }
@@ -255,6 +260,12 @@ export function openStore(path: string): Store {
   }
 
   function initVec(dims: number, opts?: InitVectorTableOptions): void {
+    if (!Number.isInteger(dims) || dims < 1 || dims > 65536) {
+      throw new CliError(
+        `Invalid embedding dimensions: ${dims} (must be integer 1–65536)`,
+        'BAD_ARG'
+      );
+    }
     if (opts?.rebuild) {
       db.exec('DROP TABLE IF EXISTS embeddings');
       deleteEmbeddingDimsMeta.run();

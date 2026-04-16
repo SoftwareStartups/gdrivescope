@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { DriveNodeInput } from '../../src/graph/model.js';
 import { openStore } from '../../src/graph/store.js';
+import { CliError } from '../../src/utils/errors.js';
 
 function makeNode(
   overrides: Partial<DriveNodeInput> & Pick<DriveNodeInput, 'id'>
@@ -102,6 +103,34 @@ describe('openStore', () => {
       store.setMeta('foo', 'baz');
       expect(store.getMeta('foo')).toBe('baz');
       expect(store.getMeta('missing')).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  test('initVectorTable rejects non-integer dimensions', () => {
+    const store = openStore(':memory:');
+    try {
+      expect(() => store.initVectorTable(1.5)).toThrow(CliError);
+    } finally {
+      store.close();
+    }
+  });
+
+  test('initVectorTable rejects zero and negative dimensions', () => {
+    const store = openStore(':memory:');
+    try {
+      expect(() => store.initVectorTable(0)).toThrow(CliError);
+      expect(() => store.initVectorTable(-1)).toThrow(CliError);
+    } finally {
+      store.close();
+    }
+  });
+
+  test('initVectorTable rejects dimensions exceeding 65536', () => {
+    const store = openStore(':memory:');
+    try {
+      expect(() => store.initVectorTable(100000)).toThrow(CliError);
     } finally {
       store.close();
     }

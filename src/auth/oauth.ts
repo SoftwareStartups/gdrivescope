@@ -93,8 +93,12 @@ async function exchangeCode(
     body,
   });
   if (!res.ok) {
+    const body = await res.text();
+    if (Bun.env.DEBUG) {
+      process.stderr.write(`[debug] token endpoint response: ${body}\n`);
+    }
     throw new CliError(
-      `token endpoint ${res.status}: ${await res.text()}`,
+      `Token exchange failed (HTTP ${res.status}). Run with DEBUG=1 for details.`,
       'AUTH_FAILED'
     );
   }
@@ -118,7 +122,8 @@ function awaitCallback(
         }
         const error = url.searchParams.get('error');
         if (error) {
-          reject(new CliError(`oauth error: ${error}`, 'AUTH_FAILED'));
+          const safeError = error.slice(0, 64).replace(/[^\w_-]/g, '_');
+          reject(new CliError(`OAuth error: ${safeError}`, 'AUTH_FAILED'));
           setTimeout(() => server.stop(true), 50);
           return new Response(`Authorization failed: ${error}`, {
             status: 400,
@@ -216,8 +221,12 @@ export async function refreshAccessToken(
     body,
   });
   if (!res.ok) {
+    const body = await res.text();
+    if (Bun.env.DEBUG) {
+      process.stderr.write(`[debug] token refresh response: ${body}\n`);
+    }
     throw new CliError(
-      `token refresh ${res.status}: ${await res.text()}`,
+      `Token refresh failed (HTTP ${res.status}). Run with DEBUG=1 for details.`,
       'AUTH_FAILED'
     );
   }

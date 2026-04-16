@@ -38,8 +38,11 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
       }
       if (!response.ok) {
         const text = await response.text();
+        if (Bun.env.DEBUG) {
+          process.stderr.write(`[debug] Voyage API response: ${text}\n`);
+        }
         throw new CliError(
-          `Voyage embedding call failed (status ${response.status}): ${text}`,
+          `Voyage embedding failed (HTTP ${response.status}). Run with DEBUG=1 for details.`,
           'EMBED_CALL_FAILED'
         );
       }
