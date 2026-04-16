@@ -1,36 +1,38 @@
 # gdrivescope
 
-> A Bun-native TypeScript CLI for Google Drive. Index a Drive folder into a local graph, summarize and embed documents via a pluggable LLM + embedding provider, and run semantic search over the result. AI-first: primary consumer is agents via `--json`.
-
-## Status
-
-Pre-alpha scaffolding. The CLI stub is wired up but no commands are implemented yet.
+> A Bun-native TypeScript CLI for Google Drive. Index a Drive folder into a local SQLite graph, summarize and embed documents via pluggable LLM + embedding providers, and run semantic search over the result. AI-first: primary consumer is agents via `--json`.
 
 ## Installation
 
-```bash
-# Build from source
-git clone https://github.com/SoftwareStartups/gdrivescope.git
-cd gdrivescope
-bun install
-task compile
-./dist/gdrivescope --help
-```
+Pre-compiled binaries for six platforms ship via [GitHub Releases](https://github.com/SoftwareStartups/gdrivescope/releases). From source: `bun install && task compile`.
 
-Pre-compiled binaries will ship via GitHub Releases once the first `v*` tag lands.
-
-## Planned commands
+## Commands
 
 | Command | Purpose |
 |---|---|
 | `gdrivescope login` | OAuth loopback + PKCE flow, store refresh token in OS keychain |
 | `gdrivescope logout` | Clear stored credentials |
-| `gdrivescope index [--scope FOLDER_ID] [--metadata-only]` | Traverse + extract + summarize + embed |
+| `gdrivescope index [--scope ID] [--metadata-only] [--resume] [--prune]` | Traverse + extract + summarize + embed |
+| `gdrivescope config show` | Print workspace config |
+| `gdrivescope config list-roots` | List configured root folders |
+| `gdrivescope config add-root <ID>` | Persist a root folder |
+| `gdrivescope config remove-root <ID>` | Remove a root folder |
 | `gdrivescope file list [FOLDER_ID] [-r]` | Tree listing from the local graph |
 | `gdrivescope file show <ID>` | Node details (path, metadata, summary, topics) |
-| `gdrivescope file search <QUERY> [--scope ID] [--limit N]` | Semantic + filter search via sqlite-vec |
-| `gdrivescope file download <ID> [-o PATH]` | Raw bytes to disk |
-| `gdrivescope ollama setup` | Configure a local Ollama LLM/embedding provider |
+| `gdrivescope file search <QUERY> [--limit N] [--threshold N]` | Semantic + filter search via sqlite-vec |
+| `gdrivescope file download <ID> [-o PATH]` | Download raw Drive file to disk |
+
+## Index flags
+
+- `--scope <ID>` — start folder (default: configured root)
+- `--metadata-only` — skip extraction + LLM + embeddings (free, fast, safe)
+- `--resume` — only process files without a summary or with errors
+- `--prune` — delete rows for files no longer visible in Drive
+- `--concurrency-drive <N>` — max parallel Drive API calls (default 15)
+- `--concurrency-llm <N>` — max parallel LLM/embedding calls (default 4)
+- `--provider <NAME>` — anthropic | openai | ollama
+- `--embedding-provider <NAME>` — openai | voyage | ollama
+- `--rebuild-embeddings` — drop + recreate vector table
 
 ## Global options
 
@@ -38,18 +40,34 @@ Pre-compiled binaries will ship via GitHub Releases once the first `v*` tag land
 - `--version`, `-v`
 - `--help`, `-h`
 
+## JSON envelope
+
+```json
+{"ok": true, "data": {"visited": 42, "summarized": 38, "embedded": 38}}
+{"ok": false, "error": "auth required", "code": "AUTH_REQUIRED"}
+```
+
+## Classification taxonomy
+
+Documents are classified as: `pitch_deck`, `board_minutes`, `board_presentation`, `financial`, `reporting`, `newsletter`, `legal`, `strategy`, `hr`, `research`, `other`.
+
 ## Environment variables
 
-- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`
-- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `VOYAGE_API_KEY`
-- `GDRIVESCOPE_LLM_PROVIDER` (`anthropic` \| `openai` \| `ollama`)
-- `GDRIVESCOPE_EMBEDDING_PROVIDER` (`openai` \| `voyage` \| `ollama`)
+- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` — Drive API credentials
+- `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `VOYAGE_API_KEY` — provider API keys
+- `GDRIVESCOPE_LLM_PROVIDER` — `anthropic` | `openai` | `ollama`
+- `GDRIVESCOPE_EMBEDDING_PROVIDER` — `openai` | `voyage` | `ollama`
 - `GDRIVESCOPE_OLLAMA_HOST`, `GDRIVESCOPE_OLLAMA_MODEL`, `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL`, `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS`
 
-## Documentation
+## Example
 
-- [README](https://github.com/SoftwareStartups/gdrivescope#readme)
-- [Issues](https://github.com/SoftwareStartups/gdrivescope/issues)
+```bash
+gdrivescope index --scope 1ABC --json
+# {"ok":true,"data":{"rootId":"1ABC","visited":42,"folders":5,"files":37,"extracted":35,"summarized":35,"embedded":35,"skipped":2,"errors":0,"pruned":0}}
+
+gdrivescope file search "quarterly revenue" --json
+# {"ok":true,"data":{"hits":[{"id":"xyz","name":"Q1 Report.pdf","score":0.87,"summary":"..."}]}}
+```
 
 ---
 

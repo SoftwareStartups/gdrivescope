@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createSemaphore } from '../../src/drive/concurrency.js';
+import { createSemaphore } from '../../src/pipeline/concurrency.js';
 
 describe('createSemaphore', () => {
   test('caps in-flight at max and queues overflow', async () => {

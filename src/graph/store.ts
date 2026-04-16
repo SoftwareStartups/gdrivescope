@@ -35,6 +35,7 @@ export interface Store {
   getMeta(key: string): string | null;
   updateSummary(id: string, patch: SummaryUpdate): void;
   recordError(id: string, message: string): void;
+  deleteNodes(ids: readonly string[]): void;
   initVectorTable(dimensions: number, opts?: InitVectorTableOptions): void;
   upsertEmbedding(nodeId: string, vector: Float32Array): void;
   clearEmbeddings(): void;
@@ -210,6 +211,7 @@ export function openStore(path: string): Store {
   const recordErrorStmt = db.prepare(
     'UPDATE nodes SET last_error = ? WHERE id = ?'
   );
+  const deleteNodeStmt = db.prepare('DELETE FROM nodes WHERE id = ?');
 
   const existing = getMetaStmt.get('schema_version') as MetaRow | null;
   if (!existing) {
@@ -333,6 +335,17 @@ export function openStore(path: string): Store {
     },
     recordError(id: string, message: string): void {
       recordErrorStmt.run(message, id);
+    },
+    deleteNodes(ids: readonly string[]): void {
+      if (ids.length === 0) return;
+      const hasEmbeddings = hasVec();
+      const deleteEmbedding = hasEmbeddings ? getDeleteEmbeddingStmt() : null;
+      db.transaction(() => {
+        for (const id of ids) {
+          deleteEmbedding?.run(id);
+          deleteNodeStmt.run(id);
+        }
+      })();
     },
     initVectorTable(dimensions: number, opts?: InitVectorTableOptions): void {
       initVec(dimensions, opts);

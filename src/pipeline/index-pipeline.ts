@@ -11,18 +11,22 @@ import { extractToMarkdown } from '../extract/kreuzberg.js';
 import { shouldExtract } from '../extract/mime-filter.js';
 import { slicePdfToFirstPages } from '../extract/pdf-slice.js';
 import { hydrateGraph } from '../graph/hydrate.js';
-import type { DriveNodeInput } from '../graph/model.js';
+import type { DriveGraph, DriveNodeInput, Node } from '../graph/model.js';
 import { nodePath } from '../graph/paths.js';
 import type { Store } from '../graph/store.js';
 import type { EmbeddingProvider } from '../llm/embedding-provider.js';
 import type { LlmProvider } from '../llm/provider.js';
 import { warn } from '../utils/logging.js';
+import { createSemaphore, withBackoff } from './concurrency.js';
+import { computePruneSet } from './pruning.js';
 
 // Whole-doc markdown often overruns a model's context window; embed the
 // first EMBED_WINDOW characters (~500 tokens) at the document level. Per-
 // chunk embeddings are deliberately deferred — `file search` ranks by
 // document-level similarity, not passage-level.
 const EMBED_WINDOW = 2000;
+const DEFAULT_DRIVE_CONCURRENCY = 15;
+const DEFAULT_LLM_CONCURRENCY = 4;
 
 export interface RunIndexOpts {
   store: Store;
@@ -38,7 +42,12 @@ export interface RunIndexOpts {
   anchorRootId?: string;
   /** Pre-resolved scope node — skips the traversal seed `files.get` call. */
   scopeNode?: DriveNodeInput;
+  /** Shorthand for `driveConcurrency` — kept for backward compat. */
   concurrency?: number;
+  driveConcurrency?: number;
+  llmConcurrency?: number;
+  resume?: boolean;
+  prune?: boolean;
 }
 
 export interface IndexStats extends TraverseResult {
@@ -47,17 +56,22 @@ export interface IndexStats extends TraverseResult {
   embedded: number;
   skipped: number;
   errors: number;
+  pruned: number;
 }
 
 export async function runIndexPipeline(
   opts: RunIndexOpts
 ): Promise<IndexStats> {
+  const seenIds = new Set<string>();
   const traverseStats = await traverseDriveFolder(opts.client, {
     rootId: opts.rootId,
     anchorRootId: opts.anchorRootId,
     scopeNode: opts.scopeNode,
-    concurrency: opts.concurrency,
-    onNode: (n) => opts.store.upsertNode(n),
+    concurrency: opts.driveConcurrency ?? opts.concurrency,
+    onNode: (n) => {
+      seenIds.add(n.id);
+      opts.store.upsertNode(n);
+    },
   });
   const stats: IndexStats = {
     ...traverseStats,
@@ -66,91 +80,51 @@ export async function runIndexPipeline(
     embedded: 0,
     skipped: 0,
     errors: 0,
+    pruned: 0,
   };
+
+  if (opts.prune) {
+    const graph = hydrateGraph(opts.store);
+    const toDelete = computePruneSet({
+      graph,
+      seenIds,
+      scopeId: opts.rootId,
+    });
+    if (toDelete.length > 0) {
+      opts.store.deleteNodes(toDelete);
+      stats.pruned = toDelete.length;
+    }
+  }
+
   if (opts.metadataOnly || !opts.llm) return stats;
 
   const llm = opts.llm;
+  const driveConcurrency =
+    opts.driveConcurrency ?? opts.concurrency ?? DEFAULT_DRIVE_CONCURRENCY;
+  const llmConcurrency = opts.llmConcurrency ?? DEFAULT_LLM_CONCURRENCY;
+  const driveSem = createSemaphore(Math.max(1, driveConcurrency));
+  const llmSem = createSemaphore(Math.max(1, llmConcurrency));
+
   const workDir = mkdtempSync(join(tmpdir(), 'gdrivescope-'));
   try {
     const graph = hydrateGraph(opts.store);
-    for (const id of graph.nodes()) {
-      const node = graph.getNodeAttributes(id);
-      if (!shouldExtract(node.mimeType)) {
-        stats.skipped += 1;
-        continue;
-      }
-      if (typeof node.size === 'number' && node.size > opts.maxSizeBytes) {
-        opts.store.recordError(
-          id,
-          `skipped: too large (${node.size} bytes > ${opts.maxSizeBytes})`
-        );
-        stats.errors += 1;
-        continue;
-      }
-      try {
-        const destDir = join(workDir, id);
-        const download = await downloadToFile(
-          opts.client,
-          { id: node.id, name: node.name, mimeType: node.mimeType },
-          destDir,
-          'auto',
-          TEXT_EXPORT_MIME_MAP
-        );
+    const { work, skipped } = buildWorkList(graph, opts.resume);
+    stats.skipped += skipped;
 
-        let markdown: string;
-        if (
-          download.mimeType === 'text/plain' ||
-          download.mimeType === 'text/csv'
-        ) {
-          // Text exports from Google Docs/Slides/Sheets bypass Kreuzberg.
-          markdown = await Bun.file(download.outputPath).text();
-        } else {
-          const raw = await Bun.file(download.outputPath).bytes();
-          const bytes: Uint8Array =
-            download.mimeType === 'application/pdf'
-              ? await slicePdfToFirstPages(raw, opts.maxPdfPages)
-              : raw;
-          if (bytes.length > opts.maxSizeBytes) {
-            opts.store.recordError(
-              id,
-              `skipped: too large after download (${bytes.length} bytes)`
-            );
-            stats.errors += 1;
-            continue;
-          }
-          markdown = await extractToMarkdown(bytes, download.mimeType);
-        }
-        stats.extracted += 1;
-
-        const hash = new Bun.CryptoHasher('sha256')
-          .update(markdown)
-          .digest('hex');
-        if (node.contentHash === hash && node.summary) {
-          // Idempotent skip: content unchanged since last run.
-          continue;
-        }
-
-        const summary = await llm.summarize({
-          markdown,
-          filename: node.name,
-          path: nodePath(graph, node.id),
-          mimeType: download.mimeType,
-        });
-        opts.store.updateSummary(node.id, {
-          summary: summary.summary,
-          classification: summary.classification,
-          keyTopics: JSON.stringify(summary.keyTopics),
-          extractedMd: markdown,
-          contentHash: hash,
-        });
-        stats.summarized += 1;
-      } catch (err) {
-        stats.errors += 1;
-        const message = err instanceof Error ? err.message : String(err);
-        opts.store.recordError(id, message);
-        warn(`index: node ${id} failed: ${message}`);
-      }
-    }
+    await Promise.all(
+      work.map((node) =>
+        processOne({
+          node,
+          graph,
+          llm,
+          opts,
+          stats,
+          workDir,
+          driveSem,
+          llmSem,
+        })
+      )
+    );
 
     if (opts.embedding) {
       try {
@@ -170,7 +144,7 @@ export async function runIndexPipeline(
           const texts = toEmbed.map((n) =>
             n.extractedMd.slice(0, EMBED_WINDOW)
           );
-          const vectors = await embedding.embed(texts);
+          const vectors = await withBackoff(() => embedding.embed(texts));
           for (let i = 0; i < toEmbed.length; i += 1) {
             const node = toEmbed[i];
             const vec = vectors[i];
@@ -190,4 +164,121 @@ export async function runIndexPipeline(
     rmSync(workDir, { recursive: true, force: true });
   }
   return stats;
+}
+
+interface WorkList {
+  work: Node[];
+  skipped: number;
+}
+
+function buildWorkList(
+  graph: DriveGraph,
+  resume: boolean | undefined
+): WorkList {
+  const work: Node[] = [];
+  let skipped = 0;
+  for (const id of graph.nodes()) {
+    const node = graph.getNodeAttributes(id);
+    if (!shouldExtract(node.mimeType)) {
+      skipped += 1;
+      continue;
+    }
+    if (resume && node.summary != null && node.lastError == null) continue;
+    work.push(node);
+  }
+  return { work, skipped };
+}
+
+interface ProcessOneParams {
+  node: Node;
+  graph: DriveGraph;
+  llm: LlmProvider;
+  opts: RunIndexOpts;
+  stats: IndexStats;
+  workDir: string;
+  driveSem: ReturnType<typeof createSemaphore>;
+  llmSem: ReturnType<typeof createSemaphore>;
+}
+
+async function processOne(p: ProcessOneParams): Promise<void> {
+  const { node, graph, llm, opts, stats, workDir, driveSem, llmSem } = p;
+
+  if (typeof node.size === 'number' && node.size > opts.maxSizeBytes) {
+    opts.store.recordError(
+      node.id,
+      `skipped: too large (${node.size} bytes > ${opts.maxSizeBytes})`
+    );
+    stats.errors += 1;
+    return;
+  }
+
+  const releaseDrive = await driveSem.acquire();
+  try {
+    const destDir = join(workDir, node.id);
+    const download = await downloadToFile(
+      opts.client,
+      { id: node.id, name: node.name, mimeType: node.mimeType },
+      destDir,
+      'auto',
+      TEXT_EXPORT_MIME_MAP
+    );
+
+    let markdown: string;
+    if (
+      download.mimeType === 'text/plain' ||
+      download.mimeType === 'text/csv'
+    ) {
+      markdown = await Bun.file(download.outputPath).text();
+    } else {
+      const raw = await Bun.file(download.outputPath).bytes();
+      const bytes: Uint8Array =
+        download.mimeType === 'application/pdf'
+          ? await slicePdfToFirstPages(raw, opts.maxPdfPages)
+          : raw;
+      if (bytes.length > opts.maxSizeBytes) {
+        opts.store.recordError(
+          node.id,
+          `skipped: too large after download (${bytes.length} bytes)`
+        );
+        stats.errors += 1;
+        return;
+      }
+      markdown = await extractToMarkdown(bytes, download.mimeType);
+    }
+    stats.extracted += 1;
+
+    const hash = new Bun.CryptoHasher('sha256').update(markdown).digest('hex');
+    if (node.contentHash === hash && node.summary) {
+      return;
+    }
+
+    const releaseLlm = await llmSem.acquire();
+    try {
+      const summary = await withBackoff(() =>
+        llm.summarize({
+          markdown,
+          filename: node.name,
+          path: nodePath(graph, node.id),
+          mimeType: download.mimeType,
+        })
+      );
+      opts.store.updateSummary(node.id, {
+        summary: summary.summary,
+        classification: summary.classification,
+        keyTopics: JSON.stringify(summary.keyTopics),
+        extractedMd: markdown,
+        contentHash: hash,
+      });
+      stats.summarized += 1;
+    } finally {
+      releaseLlm();
+    }
+  } catch (err) {
+    stats.errors += 1;
+    const message = err instanceof Error ? err.message : String(err);
+    opts.store.recordError(node.id, message);
+    warn(`index: node ${node.id} failed: ${message}`);
+  } finally {
+    releaseDrive();
+  }
 }

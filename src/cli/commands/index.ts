@@ -23,6 +23,10 @@ export interface IndexFlags {
   'add-root'?: boolean;
   'metadata-only'?: boolean;
   concurrency?: string;
+  'concurrency-drive'?: string;
+  'concurrency-llm'?: string;
+  resume?: boolean;
+  prune?: boolean;
   provider?: string;
   'embedding-provider'?: string;
   'rebuild-embeddings'?: boolean;
@@ -44,6 +48,7 @@ export interface IndexData {
   embedded: number;
   skipped: number;
   errors: number;
+  pruned: number;
   usedFallback: boolean;
 }
 
@@ -75,7 +80,11 @@ Options:
   --root <FOLDER_ID>           One-shot root override (bypasses config.toml)
   --add-root                   Persist the resolved root to config.toml
   --metadata-only              Skip extraction + LLM summarization + embeddings
-  --concurrency <N>            Max parallel files.list calls (default 4, max 15)
+  --concurrency <N>            Shorthand for --concurrency-drive
+  --concurrency-drive <N>      Max parallel Drive API calls (default 15)
+  --concurrency-llm <N>        Max parallel LLM/embedding calls (default 4)
+  --resume                     Only process nodes without a summary or with a recorded error
+  --prune                      Delete store rows for files no longer visible in Drive (scoped)
   --provider <NAME>            LLM provider: anthropic (default) | openai
   --embedding-provider <NAME>  Embedding provider: openai (default) | voyage
   --rebuild-embeddings         Drop + recreate the vector table at the current provider's dimension
@@ -96,11 +105,14 @@ Environment:
 const DEFAULT_MAX_SIZE_BYTES = 20 * 1024 * 1024;
 const DEFAULT_MAX_PDF_PAGES = 10;
 
-function parseConcurrency(value: string | undefined): number | undefined {
+function parseConcurrency(
+  flagName: string,
+  value: string | undefined
+): number | undefined {
   if (value === undefined) return undefined;
   const n = Number(value);
   if (!Number.isFinite(n) || n < 1) {
-    throw new Error(`invalid --concurrency value: ${value}`);
+    throw new Error(`invalid --${flagName} value: ${value}`);
   }
   return Math.trunc(n);
 }
@@ -156,7 +168,13 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
     const client = await createDriveClient();
     const rawScope = flags.scope ?? 'root';
     const scopeId = resolveFolder(cfg, rawScope);
-    const concurrency = parseConcurrency(flags.concurrency);
+    const driveConcurrency =
+      parseConcurrency('concurrency-drive', flags['concurrency-drive']) ??
+      parseConcurrency('concurrency', flags.concurrency);
+    const llmConcurrency = parseConcurrency(
+      'concurrency-llm',
+      flags['concurrency-llm']
+    );
     const metadataOnly = flags['metadata-only'] === true;
     const maxSizeBytes = resolveMaxSize(
       flags['max-size'],
@@ -206,7 +224,10 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       rootId: ancestry.scope.id,
       anchorRootId: ancestry.rootId,
       scopeNode: ancestry.scope,
-      concurrency,
+      driveConcurrency,
+      llmConcurrency,
+      resume: flags.resume === true,
+      prune: flags.prune === true,
       metadataOnly,
       llm,
       embedding,
@@ -253,6 +274,7 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       embedded: stats.embedded,
       skipped: stats.skipped,
       errors: stats.errors,
+      pruned: stats.pruned,
       usedFallback: ancestry.usedFallback,
     });
   } catch (err) {
@@ -274,6 +296,7 @@ export function render(data: IndexData): string {
     `  embedded:   ${data.embedded}`,
     `  skipped:    ${data.skipped}`,
     `  errors:     ${data.errors}`,
+    `  pruned:     ${data.pruned}`,
     `  db:         ${data.dbPath}`,
   ];
   if (data.usedFallback) {

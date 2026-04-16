@@ -34,8 +34,8 @@ jobs:
       - name: Typecheck
         run: task typecheck
 
-  test:
-    name: Tests
+  unit-tests:
+    name: Unit Tests
     needs: lint-and-typecheck
     runs-on: ubuntu-latest
 
@@ -46,8 +46,23 @@ jobs:
       - name: Setup Bun environment
         uses: ./.github/actions/setup-bun-env
 
-      - name: Run tests
-        run: task test
+      - name: Run unit tests
+        run: task test:unit
+
+  integration-tests:
+    name: Integration Tests
+    needs: lint-and-typecheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Bun environment
+        uses: ./.github/actions/setup-bun-env
+
+      - name: Run integration tests
+        run: task test:integration
 
   build:
     name: Build

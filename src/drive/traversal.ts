@@ -1,6 +1,6 @@
 import type { drive_v3 } from '@googleapis/drive';
 import type { DriveNodeInput } from '../graph/model.js';
-import { createSemaphore } from './concurrency.js';
+import { createSemaphore } from '../pipeline/concurrency.js';
 
 export interface TraverseOptions {
   /**

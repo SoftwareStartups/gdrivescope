@@ -35,9 +35,20 @@ tasks:
       - bun run typecheck
 
   test:
-    desc: Run tests
+    desc: Run all tests (unit + integration)
     cmds:
-      - bun test
+      - bun test tests/unit
+      - bun test tests/integration
+
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - bun test tests/unit
+
+  test:integration:
+    desc: Run integration tests
+    cmds:
+      - bun test tests/integration
 
   check:
     desc: Run lint, typecheck, and tests
