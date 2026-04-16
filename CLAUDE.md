@@ -2,8 +2,6 @@
 
 Bun-native TypeScript CLI for Google Drive. Traverses folders into a directed graph, extracts document content to markdown, summarizes/embeds via pluggable LLM + embedding providers, and serves semantic search over a local `bun:sqlite` database with a `sqlite-vec` virtual table.
 
-Status: **pre-alpha scaffolding**. Only a CLI stub is wired up; the command surface described below is aspirational.
-
 ## Environment variables
 
 | Variable | Purpose |
@@ -19,6 +17,8 @@ Status: **pre-alpha scaffolding**. Only a CLI stub is wired up; the command surf
 | `GDRIVESCOPE_OLLAMA_MODEL` | Ollama chat model |
 | `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL` | Ollama embedding model |
 | `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS` | Ollama embedding vector size |
+| `GDRIVESCOPE_MAX_SIZE` | Default `--max-size` value (bytes) |
+| `GDRIVESCOPE_MAX_PDF_PAGES` | Default `--max-pdf-pages` value |
 
 ## Commands
 
@@ -32,6 +32,8 @@ task clean                           # Remove build/ and dist/
 task lint                            # Lint with Biome
 task format                          # Format with Biome (write)
 task test                            # Run tests (bun test)
+task test:unit                       # Unit tests only
+task test:integration                # Integration tests only
 task check                           # Lint + typecheck + tests
 
 # Pipelines
@@ -44,59 +46,25 @@ task compile:all                     # Build binaries for all 6 platforms
 
 ## Architecture
 
-```text
+```
 src/
-├── index.ts                    # CLI entry: parseArgs + noun-verb dispatch
-├── cli/
-│   ├── commands/
-│   │   ├── login.ts            # OAuth loopback + PKCE
-│   │   ├── logout.ts
-│   │   ├── index.ts            # "gdrivescope index" — builds graph
-│   │   ├── file-list.ts
-│   │   ├── file-show.ts
-│   │   ├── file-search.ts
-│   │   └── file-download.ts
-│   └── registry.ts             # noun-verb table
-├── auth/
-│   ├── keychain.ts             # Bun.secrets wrapper
-│   └── oauth.ts                # loopback + PKCE flow
-├── drive/
-│   ├── client.ts               # @googleapis/drive factory + token refresh
-│   ├── traversal.ts            # BFS via files.list
-│   └── download.ts             # raw bytes streamer
-├── graph/
-│   ├── model.ts                # Node/Edge types, graphology wrapper
-│   ├── store.ts                # bun:sqlite schema + CRUD + sqlite-vec init
-│   ├── hydrate.ts              # load DB → in-memory graphology instance
-│   └── persist.ts              # upsert node, upsert edge, write embeddings
-├── extract/
-│   └── kreuzberg.ts            # @kreuzberg/node wrapper (markdown out)
-├── llm/
-│   ├── provider.ts             # LlmProvider + EmbeddingProvider interfaces
-│   ├── anthropic.ts
-│   ├── openai.ts
-│   ├── voyage.ts
-│   ├── ollama.ts
-│   └── resolver.ts             # pick provider from config/env
-├── pipeline/
-│   ├── index-pipeline.ts       # traverse → extract → summarize → embed → store
-│   └── concurrency.ts          # bounded parallel with backoff
-├── search/
-│   └── vector-search.ts        # sqlite-vec query + filters
-├── models/
-│   └── api-response.ts         # ApiResponse<T>
-├── formatters/
-│   └── output.ts               # human vs json
-└── utils/
-    ├── logging.ts              # stderr only
-    ├── config.ts               # ~/.config/gdrivescope/config.toml
-    └── errors.ts
+  index.ts       CLI entry: parseArgs + noun-verb dispatch
+  auth/          OAuth 2.0 + PKCE loopback, keychain vault, credential resolution
+  cli/           Noun-verb command registry + 11 command implementations
+  config/        TOML workspace config (~/.config/gdrivescope/config.toml)
+  drive/         Google Drive API client, BFS traversal, download/exports, ancestry
+  extract/       Kreuzberg markdown extraction, MIME filtering, PDF slicing
+  formatters/    Human vs JSON output emitter
+  graph/         bun:sqlite store, graphology model, hydration, path helpers
+  llm/           LLM + embedding provider interfaces, implementations, resolvers
+  models/        ApiResponse<T> envelope
+  pipeline/      Index orchestration, bounded concurrency, pruning
+  search/        sqlite-vec kNN query + post-filtering
+  utils/         Config paths, typed errors, logging, interactive prompts
 tests/
-├── unit/
-├── integration/                # in-memory sqlite, fake LLM provider
-└── e2e/                        # compiled binary against recorded Drive fixtures
-scripts/
-└── spikes/                     # dependency risk spike scripts
+  unit/          Pure logic tests
+  integration/   Cross-module tests with fake providers
+  helpers/       Shared test factories and fakes
 ```
 
 ## Conventions
@@ -108,9 +76,18 @@ scripts/
 - **Output:** human-readable default, `--json` flag emits `{ok, data}` / `{ok, error, code}` envelope
 - **Graph:** `graphology` in memory, rehydrated from sqlite on command startup; edges implicit from `parent_id`
 - **Persistence:** single `~/.config/gdrivescope/drive.db` via `bun:sqlite` + `sqlite-vec` virtual table
-- **Document extraction:** `@kreuzberg/node` (NAPI) with markdown output; `@kreuzberg/wasm` as fallback if NAPI fails under `bun build --compile`
+- **Document extraction:** `@kreuzberg/wasm` for markdown extraction; system SQLite with extension support required for `sqlite-vec`
 - **Release:** 6-platform GitHub Actions matrix, SHA-pinned actions
 
 ## Testing
 
-Three tiers: `tests/unit`, `tests/integration`, `tests/e2e`. All run under `bun test` with preload `tests/helpers/setup.ts`.
+Three tiers: `tests/unit`, `tests/integration`, `tests/e2e`. See `tests/CLAUDE.md` for helpers and mocking patterns.
+
+## See also
+
+- `src/cli/CLAUDE.md` — command contract, dispatch, adding new commands
+- `src/llm/CLAUDE.md` — provider interfaces, resolver cascade, adding providers
+- `src/graph/CLAUDE.md` — SQLite setup, schema, vec0 quirks, graphology hydration
+- `tests/CLAUDE.md` — test tiers, helpers, mocking patterns
+- `.github/CLAUDE.md` — CI workflow, release workflow, SHA pinning
+- `.claude/rules/typescript-style.md` — TypeScript + Biome coding rules
