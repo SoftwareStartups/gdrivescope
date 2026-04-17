@@ -1,6 +1,6 @@
 {
   "name": "@softwarestartups/gdrivescope",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Bun-native TypeScript CLI for indexing, searching, and downloading Google Drive",
   "private": true,
   "type": "module",
