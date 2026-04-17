@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import pkg from '../../package.json' with { type: 'json' };
 import { resetVaultCache } from '../../src/auth/keychain.js';
 import { main } from '../../src/index.js';
 
@@ -35,7 +36,7 @@ describe('main dispatcher', () => {
   test('--version prints version in human mode', async () => {
     const code = await main(['--version']);
     expect(code).toBe(0);
-    expect(stdoutCalls.join('')).toContain('0.0.0');
+    expect(stdoutCalls.join('')).toContain(pkg.version);
   });
 
   test('--json --version emits envelope', async () => {
@@ -43,7 +44,7 @@ describe('main dispatcher', () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(stdoutCalls.join('').trim());
     expect(parsed.ok).toBe(true);
-    expect(parsed.data).toBe('0.0.0');
+    expect(parsed.data).toBe(pkg.version);
   });
 
   test('no args prints help and exits 0', async () => {
