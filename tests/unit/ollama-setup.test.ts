@@ -112,15 +112,15 @@ describe('ollama setup command', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
     expect(result.data.embeddingDimensions).toBe(768);
-    expect(result.data.llmModel).toBe('llama3.2:3b-instruct');
+    expect(result.data.llmModel).toBe('llama3.2:3b');
     expect(result.data.embeddingModel).toBe('nomic-embed-text');
     expect(spawnCalls).toHaveLength(2);
-    expect(spawnCalls[0]).toContain('llama3.2:3b-instruct');
+    expect(spawnCalls[0]).toContain('llama3.2:3b');
     expect(spawnCalls[1]).toContain('nomic-embed-text');
 
     const configText = await Bun.file(`${tmpDir}/config.toml`).text();
     expect(configText).toContain('ollama');
-    expect(configText).toContain('llama3.2:3b-instruct');
+    expect(configText).toContain('llama3.2:3b');
   });
 
   test('skips pull when models are installed', async () => {
@@ -130,7 +130,7 @@ describe('ollama setup command', () => {
         status: 200,
         body: {
           models: [
-            { name: 'llama3.2:3b-instruct' },
+            { name: 'llama3.2:3b' },
             { name: 'nomic-embed-text:latest' },
           ],
         },
@@ -197,10 +197,7 @@ describe('ollama setup command', () => {
         ok: true,
         status: 200,
         body: {
-          models: [
-            { name: 'llama3.2:3b-instruct' },
-            { name: 'nomic-embed-text' },
-          ],
+          models: [{ name: 'llama3.2:3b' }, { name: 'nomic-embed-text' }],
         },
       },
       '/api/embed': {

@@ -119,7 +119,7 @@ describe('workspace config', () => {
       folders: {},
       ollama: {
         host: 'http://localhost:11434',
-        llmModel: 'llama3.2:3b-instruct',
+        llmModel: 'llama3.2:3b',
         embeddingModel: 'nomic-embed-text',
         embeddingDimensions: 768,
       },

@@ -47,7 +47,7 @@ When the explicit value differs from a provider's built-in default, that value i
 | `anthropic` | LLM | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
 | `openai` | LLM | `gpt-5.4-nano` | `OPENAI_API_KEY` |
 | `azure-openai` | LLM | `gpt-5.4-nano` | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` |
-| `ollama` | LLM | `llama3.2:3b-instruct` | none (local) |
+| `ollama` | LLM | `llama3.2:3b` | none (local) |
 | `openai` | Embedding | `text-embedding-3-small` | `OPENAI_API_KEY` |
 | `azure-openai` | Embedding | `text-embedding-3-small` | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` |
 | `voyage` | Embedding | `voyage-3-lite` | `VOYAGE_API_KEY` |

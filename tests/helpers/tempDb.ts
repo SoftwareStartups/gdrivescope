@@ -13,12 +13,15 @@ export interface TempDbContext {
 export function useTempDb(prefix: string): TempDbContext {
   const tmpDir = mkdtempSync(join(tmpdir(), `gdrivescope-${prefix}-`));
   const dbPath = join(tmpDir, 'drive.db');
+  const configPath = join(tmpDir, 'config.toml');
   Bun.env.GDRIVESCOPE_DB = dbPath;
+  Bun.env.GDRIVESCOPE_CONFIG = configPath;
   return {
     dbPath,
     tmpDir,
     cleanup() {
       delete Bun.env.GDRIVESCOPE_DB;
+      delete Bun.env.GDRIVESCOPE_CONFIG;
       rmSync(tmpDir, { recursive: true, force: true });
     },
   };

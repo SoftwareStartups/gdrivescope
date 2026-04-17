@@ -105,7 +105,7 @@ Environment:
   GDRIVESCOPE_LLM_PROVIDER         Default LLM provider (flag > env > config > auto-infer)
   GDRIVESCOPE_EMBEDDING_PROVIDER   Default embedding provider (flag > env > config > auto-infer)
   GDRIVESCOPE_OLLAMA_HOST          Ollama base URL (default http://localhost:11434)
-  GDRIVESCOPE_OLLAMA_MODEL         Ollama chat model (default llama3.2:3b-instruct)
+  GDRIVESCOPE_OLLAMA_MODEL         Ollama chat model (default llama3.2:3b)
   GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL       Ollama embedding model (default nomic-embed-text)
   GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS  Ollama embedding vector size (default 768)
   GDRIVESCOPE_MAX_SIZE             Default --max-size value

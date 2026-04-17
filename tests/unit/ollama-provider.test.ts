@@ -63,7 +63,7 @@ describe('OllamaProvider', () => {
 
     const provider = new OllamaProvider({
       host: 'http://localhost:11434',
-      model: 'llama3.2:3b-instruct',
+      model: 'llama3.2:3b',
     });
     const result = await provider.summarize(INPUT);
 

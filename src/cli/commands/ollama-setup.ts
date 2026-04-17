@@ -22,7 +22,7 @@ export interface OllamaSetupData {
 }
 
 const DEFAULT_HOST = 'http://localhost:11434';
-const DEFAULT_LLM = 'llama3.2:3b-instruct';
+const DEFAULT_LLM = 'llama3.2:3b';
 const DEFAULT_EMBED = 'nomic-embed-text';
 
 export const HELP = `gdrivescope ollama setup — Configure local Ollama for gdrivescope
@@ -36,7 +36,7 @@ Usage:
 
 Options:
   --host <URL>               Ollama base URL (default http://localhost:11434)
-  --llm-model <NAME>         LLM model to install (default llama3.2:3b-instruct)
+  --llm-model <NAME>         LLM model to install (default llama3.2:3b)
   --embedding-model <NAME>   Embedding model (default nomic-embed-text)
   --skip-pull                Assume models are already installed
   --json                     Emit JSON envelope

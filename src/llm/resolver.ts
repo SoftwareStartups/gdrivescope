@@ -141,7 +141,6 @@ export function resolveLlmProvider(opts: ResolveLlmOptions): LlmProvider {
     Bun.env.GDRIVESCOPE_OLLAMA_HOST ??
     opts.ollamaConfig?.host ??
     'http://localhost:11434';
-  const ollamaModel =
-    model ?? opts.ollamaConfig?.llmModel ?? 'llama3.2:3b-instruct';
+  const ollamaModel = model ?? opts.ollamaConfig?.llmModel ?? 'llama3.2:3b';
   return new OllamaProvider({ host, model: ollamaModel });
 }
