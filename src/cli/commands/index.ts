@@ -187,6 +187,7 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
           flagProvider: flags['embedding-provider'],
           configProvider: cfg.embedding?.provider,
           configModel: cfg.embedding?.model,
+          embeddingConfig: cfg.embedding,
           ollamaConfig: cfg.ollama,
           azureConfig: cfg.azure,
         });

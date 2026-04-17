@@ -103,6 +103,7 @@ export async function run(
           flagProvider: flags['embedding-provider'],
           configProvider: cfg.embedding?.provider,
           configModel: cfg.embedding?.model,
+          embeddingConfig: cfg.embedding,
           ollamaConfig: cfg.ollama,
           azureConfig: cfg.azure,
         });

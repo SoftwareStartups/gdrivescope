@@ -7,15 +7,17 @@ import {
   useTempDb,
 } from '../helpers/tempDb.js';
 
+const MY_DRIVE_ID = '0A1B2C3D4myDriveRealId';
+
 describe('file list command', () => {
   let ctx: TempDbContext;
 
   beforeEach(() => {
     ctx = useTempDb('filelist');
     seedTempDb(ctx.dbPath, [
-      nodeInput({ id: 'root', name: 'My Drive', parentId: null }),
-      nodeInput({ id: 'docs', name: 'Docs', parentId: 'root' }),
-      nodeInput({ id: 'images', name: 'Images', parentId: 'root' }),
+      nodeInput({ id: MY_DRIVE_ID, name: 'My Drive', parentId: null }),
+      nodeInput({ id: 'docs', name: 'Docs', parentId: MY_DRIVE_ID }),
+      nodeInput({ id: 'images', name: 'Images', parentId: MY_DRIVE_ID }),
       nodeInput({
         id: 'report',
         name: 'report.pdf',
@@ -40,11 +42,11 @@ describe('file list command', () => {
 
   afterEach(() => ctx.cleanup());
 
-  test('default lists direct children of root', async () => {
-    const response = await run({ _positional: 'root' });
+  test('defaults to My Drive root when no positional is supplied', async () => {
+    const response = await run({});
     expect(response.ok).toBe(true);
     if (!response.ok) return;
-    expect(response.data.files).toHaveLength(2);
+    expect(response.data.startId).toBe(MY_DRIVE_ID);
     expect(response.data.files.map((f) => f.id).sort()).toEqual([
       'docs',
       'images',
@@ -52,8 +54,26 @@ describe('file list command', () => {
     expect(response.data.recursive).toBe(false);
   });
 
+  test('`root` sentinel resolves to My Drive root', async () => {
+    const response = await run({ _positional: 'root' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.startId).toBe(MY_DRIVE_ID);
+    expect(response.data.files.map((f) => f.id).sort()).toEqual([
+      'docs',
+      'images',
+    ]);
+  });
+
+  test('`my-drive` sentinel resolves to My Drive root', async () => {
+    const response = await run({ _positional: 'my-drive' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.startId).toBe(MY_DRIVE_ID);
+  });
+
   test('recursive lists all descendants', async () => {
-    const response = await run({ _positional: 'root', recursive: true });
+    const response = await run({ recursive: true });
     expect(response.ok).toBe(true);
     if (!response.ok) return;
     expect(response.data.files).toHaveLength(5);
@@ -81,9 +101,19 @@ describe('file list command', () => {
     expect(response.code).toBe('NODE_NOT_FOUND');
   });
 
+  test('empty store returns NODE_NOT_FOUND with index suggestion', async () => {
+    ctx.cleanup();
+    ctx = useTempDb('filelist-empty');
+    seedTempDb(ctx.dbPath, []);
+    const response = await run({});
+    expect(response.ok).toBe(false);
+    if (response.ok) return;
+    expect(response.code).toBe('NODE_NOT_FOUND');
+    expect(response.error).toMatch(/gdrivescope index/);
+  });
+
   test('--limit truncates the result set', async () => {
     const response = await run({
-      _positional: 'root',
       recursive: true,
       limit: '3',
     });
@@ -92,14 +122,21 @@ describe('file list command', () => {
     expect(response.data.files).toHaveLength(3);
   });
 
-  test('defaults to FOLDER_ID=root when no positional is supplied', async () => {
+  test('multiple roots: listing with no positional enumerates the roots', async () => {
+    ctx.cleanup();
+    ctx = useTempDb('filelist-multi');
+    seedTempDb(ctx.dbPath, [
+      nodeInput({ id: 'rootA', name: 'Workspace A', parentId: null }),
+      nodeInput({ id: 'rootB', name: 'Workspace B', parentId: null }),
+      nodeInput({ id: 'childA', name: 'childA', parentId: 'rootA' }),
+    ]);
     const response = await run({});
     expect(response.ok).toBe(true);
     if (!response.ok) return;
-    expect(response.data.startId).toBe('root');
+    expect(response.data.startId).toBe('(workspace)');
     expect(response.data.files.map((f) => f.id).sort()).toEqual([
-      'docs',
-      'images',
+      'rootA',
+      'rootB',
     ]);
   });
 });

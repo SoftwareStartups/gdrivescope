@@ -47,6 +47,8 @@ export interface Store {
   deleteNodes(ids: readonly string[]): void;
   initVectorTable(dimensions: number, opts?: InitVectorTableOptions): void;
   upsertEmbedding(nodeId: string, vector: Float32Array): void;
+  markEmbedded(nodeId: string, hash: string): void;
+  clearEmbeddedHashes(): void;
   clearEmbeddings(): void;
   hasVectorTable(): boolean;
   close(): void;
@@ -70,6 +72,7 @@ interface NodeRow {
   key_topics: string | null;
   extracted_md: string | null;
   content_hash: string | null;
+  last_embedded_hash: string | null;
   last_indexed: string | null;
   last_error: string | null;
 }
@@ -104,6 +107,7 @@ function rowToNode(row: NodeRow): Node {
     keyTopics: row.key_topics,
     extractedMd: row.extracted_md,
     contentHash: row.content_hash,
+    lastEmbeddedHash: row.last_embedded_hash,
     lastIndexed: row.last_indexed,
     lastError: row.last_error,
   };
@@ -173,6 +177,9 @@ export function openStore(path: string): Store {
   if (!hasColumn(db, 'nodes', 'last_error')) {
     db.exec('ALTER TABLE nodes ADD COLUMN last_error TEXT');
   }
+  if (!hasColumn(db, 'nodes', 'last_embedded_hash')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN last_embedded_hash TEXT');
+  }
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_mime ON nodes(mime_type)');
@@ -222,6 +229,12 @@ export function openStore(path: string): Store {
       last_indexed   = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
+  const markEmbeddedStmt = db.prepare(
+    'UPDATE nodes SET last_embedded_hash = ? WHERE id = ?'
+  );
+  const clearEmbeddedHashesStmt = db.prepare(
+    'UPDATE nodes SET last_embedded_hash = NULL'
+  );
   const recordErrorStmt = db.prepare(
     'UPDATE nodes SET last_error = ? WHERE id = ?'
   );
@@ -405,6 +418,12 @@ export function openStore(path: string): Store {
       );
       getDeleteEmbeddingStmt().run(nodeId);
       getInsertEmbeddingStmt().run(nodeId, bytes);
+    },
+    markEmbedded(nodeId: string, hash: string): void {
+      markEmbeddedStmt.run(hash, nodeId);
+    },
+    clearEmbeddedHashes(): void {
+      clearEmbeddedHashesStmt.run();
     },
     clearEmbeddings(): void {
       db.exec('DROP TABLE IF EXISTS embeddings');

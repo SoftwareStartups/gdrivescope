@@ -3,7 +3,7 @@
 ## Two Interface Families
 
 - `LlmProvider` (`provider.ts`): `{ name, summarize(input) → LlmSummary }`
-- `EmbeddingProvider` (`embedding-provider.ts`): `{ name, dimensions, embed(texts) → number[][] }`
+- `EmbeddingProvider` (`embedding-provider.ts`): `{ name, dimensions, embed(texts) → number[][], probe?() }` — the optional `probe()` fires a one-token embed request and throws `EMBEDDING_DIM_MISMATCH` when the declared width disagrees with the model's actual output. `runIndexPipeline` calls it before summarization so a misconfigured dimension fails fast, before any LLM spend.
 
 These are separate interfaces with separate resolvers. A provider can implement one or both.
 
@@ -24,6 +24,21 @@ When no provider is explicitly configured, resolvers scan available API keys:
 ### Model Cascade
 
 Model selection per provider: provider-specific env var > `config.toml [llm].model` / `[embedding].model` > provider built-in default.
+
+### Embedding Dimensions
+
+Embedding vector width is also a resolver knob, because OpenAI, Voyage, and Azure OpenAI ship multiple embedding models with different native widths (e.g. `text-embedding-3-small` = 1536, `text-embedding-3-large` = 3072; `voyage-3-lite` = 512, `voyage-3` = 1024).
+
+Precedence: provider-specific env var > `config.toml [embedding].dimensions` > provider built-in default.
+
+Per-provider env vars:
+
+- `GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS`
+- `GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS`
+- `GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS`
+- `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS`
+
+When the explicit value differs from a provider's built-in default, that value is also sent on the wire as the API's `dimensions` / `output_dimension` parameter, so the request returns vectors at the declared width. The resolver does not validate the value — `probe()` runs at pipeline start and fails with `EMBEDDING_DIM_MISMATCH` if the model actually emits a different width.
 
 ## Providers
 

@@ -22,8 +22,11 @@ Bun-native TypeScript CLI for Google Drive. Traverses folders into a directed gr
 | `GDRIVESCOPE_OPENAI_MODEL` | OpenAI LLM model override |
 | `GDRIVESCOPE_AZURE_OPENAI_MODEL` | Azure OpenAI LLM model override |
 | `GDRIVESCOPE_OPENAI_EMBEDDING_MODEL` | OpenAI embedding model override |
+| `GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS` | OpenAI embedding vector size (default 1536 for `text-embedding-3-small`; 3072 for `-large`) |
 | `GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_MODEL` | Azure OpenAI embedding model override |
+| `GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS` | Azure OpenAI embedding vector size |
 | `GDRIVESCOPE_VOYAGE_MODEL` | Voyage embedding model override |
+| `GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS` | Voyage embedding vector size (default 512 for `voyage-3-lite`; 1024 for `voyage-3`) |
 | `GDRIVESCOPE_OLLAMA_HOST` | Ollama base URL (default `http://localhost:11434`) |
 | `GDRIVESCOPE_OLLAMA_MODEL` | Ollama chat model |
 | `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL` | Ollama embedding model |

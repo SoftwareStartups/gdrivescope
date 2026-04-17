@@ -16,6 +16,7 @@ export interface LlmConfig {
 export interface EmbeddingConfig {
   provider?: string;
   model?: string;
+  dimensions?: number;
 }
 
 export interface OllamaConfig {
@@ -99,10 +100,13 @@ function parseEmbedding(raw: unknown): EmbeddingConfig | undefined {
   if (!isStringRecord(raw)) return undefined;
   const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
   const model = typeof raw.model === 'string' ? raw.model : undefined;
-  if (!provider && !model) return undefined;
+  const dimensions =
+    typeof raw.dimensions === 'number' ? raw.dimensions : undefined;
+  if (!provider && !model && dimensions === undefined) return undefined;
   const out: EmbeddingConfig = {};
   if (provider) out.provider = provider;
   if (model) out.model = model;
+  if (dimensions !== undefined) out.dimensions = dimensions;
   return out;
 }
 
@@ -193,10 +197,16 @@ export async function saveWorkspaceConfig(
     if (cfg.llm.model) l.model = cfg.llm.model;
     payload.llm = l;
   }
-  if (cfg.embedding?.provider || cfg.embedding?.model) {
+  if (
+    cfg.embedding?.provider ||
+    cfg.embedding?.model ||
+    cfg.embedding?.dimensions !== undefined
+  ) {
     const e: Record<string, unknown> = {};
     if (cfg.embedding.provider) e.provider = cfg.embedding.provider;
     if (cfg.embedding.model) e.model = cfg.embedding.model;
+    if (cfg.embedding.dimensions !== undefined)
+      e.dimensions = cfg.embedding.dimensions;
     payload.embedding = e;
   }
   if (cfg.extraction) {

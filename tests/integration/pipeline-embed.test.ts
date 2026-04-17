@@ -164,6 +164,115 @@ describe('runIndexPipeline — embeddings', () => {
     store.close();
   });
 
+  test('second pass with unchanged content does not re-embed', async () => {
+    const store = openStore(':memory:');
+    const client = makeClient();
+    const llm = new FakeLlmProvider();
+    const embedding = new FakeEmbeddingProvider(16);
+
+    const first = await runIndexPipeline({
+      store,
+      client,
+      rootId: 'root',
+      metadataOnly: false,
+      llm,
+      embedding,
+      maxSizeBytes: 20 * 1024 * 1024,
+      maxPdfPages: 10,
+    });
+    expect(first.embedded).toBe(3);
+    expect(embedding.calls).toHaveLength(1);
+
+    // Same content hash, --resume skips summarize; embedding loop must also
+    // skip because last_embedded_hash matches content_hash.
+    const second = await runIndexPipeline({
+      store,
+      client,
+      rootId: 'root',
+      metadataOnly: false,
+      llm,
+      embedding,
+      resume: true,
+      maxSizeBytes: 20 * 1024 * 1024,
+      maxPdfPages: 10,
+    });
+    expect(second.embedded).toBe(0);
+    expect(embedding.calls).toHaveLength(1); // no new embed call
+
+    store.close();
+  });
+
+  test('changed content re-embeds only the affected node', async () => {
+    const store = openStore(':memory:');
+    const client = makeClient();
+    const embedding = new FakeEmbeddingProvider(16);
+
+    await runIndexPipeline({
+      store,
+      client,
+      rootId: 'root',
+      metadataOnly: false,
+      llm: new FakeLlmProvider(),
+      embedding,
+      maxSizeBytes: 20 * 1024 * 1024,
+      maxPdfPages: 10,
+    });
+
+    // Mutate the stored contentHash for doc1 so the filter treats it as
+    // having new content relative to last_embedded_hash.
+    store.db
+      .prepare('UPDATE nodes SET content_hash = ? WHERE id = ?')
+      .run('forced-new-hash', 'doc1');
+
+    const stats = await runIndexPipeline({
+      store,
+      client,
+      rootId: 'root',
+      metadataOnly: false,
+      llm: new FakeLlmProvider(),
+      embedding,
+      resume: true,
+      maxSizeBytes: 20 * 1024 * 1024,
+      maxPdfPages: 10,
+    });
+
+    expect(stats.embedded).toBe(1);
+    expect(embedding.calls).toHaveLength(2);
+    const secondCallTexts = embedding.calls[1] as string[];
+    expect(secondCallTexts).toHaveLength(1);
+
+    store.close();
+  });
+
+  test('probe failure aborts before any summary is written', async () => {
+    const store = openStore(':memory:');
+    const llm = new FakeLlmProvider();
+    const base = new FakeEmbeddingProvider(16);
+    const embedding = Object.assign(base, {
+      probe: async (): Promise<void> => {
+        throw new Error('dimension mismatch: 1024 != 16');
+      },
+    });
+
+    try {
+      await runIndexPipeline({
+        store,
+        client: makeClient(),
+        rootId: 'root',
+        metadataOnly: false,
+        llm,
+        embedding,
+        maxSizeBytes: 20 * 1024 * 1024,
+        maxPdfPages: 10,
+      });
+      throw new Error('should have thrown');
+    } catch (err) {
+      expect((err as Error).message).toMatch(/dimension mismatch/);
+    }
+    expect(llm.calls).toHaveLength(0);
+    store.close();
+  });
+
   test('metadata-only skips the embed step entirely', async () => {
     const store = openStore(':memory:');
     const stats = await runIndexPipeline({

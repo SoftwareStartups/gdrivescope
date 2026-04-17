@@ -51,7 +51,15 @@ function buildDocTree(count: number): Tree {
   return { byId, children: { root: docs }, payloads };
 }
 
-function makeClient(tree: Tree): drive_v3.Drive {
+interface ExportTracker {
+  peakExports: number;
+}
+
+function makeClient(
+  tree: Tree,
+  opts?: { exportHoldMs?: number; tracker?: ExportTracker }
+): drive_v3.Drive {
+  let inFlightExports = 0;
   const files = {
     get(params: { fileId: string; alt?: string }) {
       const file = tree.byId[params.fileId];
@@ -65,13 +73,27 @@ function makeClient(tree: Tree): drive_v3.Drive {
         data: { files: tree.children[parent] ?? [] },
       });
     },
-    export(params: { fileId: string; mimeType: string }) {
+    async export(params: { fileId: string; mimeType: string }) {
       const payload =
         tree.payloads[`export:${params.fileId}:${params.mimeType}`];
       if (!payload) {
         throw new Error(`fake: no export ${params.fileId} ${params.mimeType}`);
       }
-      return Promise.resolve({ data: Readable.from([payload]) });
+      inFlightExports += 1;
+      if (opts?.tracker) {
+        opts.tracker.peakExports = Math.max(
+          opts.tracker.peakExports,
+          inFlightExports
+        );
+      }
+      try {
+        if (opts?.exportHoldMs) {
+          await new Promise((r) => setTimeout(r, opts.exportHoldMs));
+        }
+        return { data: Readable.from([payload]) };
+      } finally {
+        inFlightExports -= 1;
+      }
     },
   };
   return { files } as unknown as drive_v3.Drive;
@@ -138,6 +160,42 @@ describe('runIndexPipeline — parallel', () => {
     expect(llm.maxInFlight).toBeGreaterThan(1);
     // …but was bounded by the llm semaphore.
     expect(llm.maxInFlight).toBeLessThanOrEqual(2);
+    store.close();
+  });
+
+  test('drive concurrency is independent of llm concurrency', async () => {
+    // With drive=5 and llm=1, each task's drive permit must be released
+    // before its LLM call blocks, otherwise 5 downloads would have to wait
+    // serially on the single LLM slot. We verify peak concurrent downloads
+    // exceeds the LLM concurrency.
+    const store = openStore(':memory:');
+    const tracker: ExportTracker = { peakExports: 0 };
+    const client = makeClient(buildDocTree(FILE_COUNT), {
+      exportHoldMs: 30,
+      tracker,
+    });
+    const llm = new TracingLlm(100);
+
+    const stats = await runIndexPipeline({
+      store,
+      client,
+      rootId: 'root',
+      metadataOnly: false,
+      llm,
+      driveConcurrency: 5,
+      llmConcurrency: 1,
+      maxSizeBytes: 20 * 1024 * 1024,
+      maxPdfPages: 10,
+    });
+
+    expect(stats.summarized).toBe(FILE_COUNT);
+    expect(stats.errors).toBe(0);
+    // The llm semaphore still throttles summaries to 1.
+    expect(llm.maxInFlight).toBe(1);
+    // But the drive side saw concurrent downloads well above 1 — it would
+    // be capped at 1 if drive permits were held through the LLM call.
+    expect(tracker.peakExports).toBeGreaterThan(1);
+    expect(tracker.peakExports).toBeLessThanOrEqual(5);
     store.close();
   });
 

@@ -178,7 +178,13 @@ export async function traverseDriveFolder(
         visited += 1;
         if (node.mimeType === FOLDER_MIME) {
           folders += 1;
-          const childId = node.id;
+          // For folder shortcuts the synthesized node keeps the shortcut's own
+          // id, but Drive's parent/child graph only links children to the
+          // target id. Queue the target id so BFS actually descends.
+          const childId =
+            file.mimeType === SHORTCUT_MIME
+              ? (file.shortcutDetails?.targetId ?? null)
+              : node.id;
           if (childId && !seenFolders.has(childId)) {
             seenFolders.add(childId);
             queue.push(childId);

@@ -21,6 +21,14 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     this.dimensions = opts.dimensions;
   }
 
+  probe(): Promise<void> {
+    return OllamaEmbeddingProvider.probeDimension(
+      this.host,
+      this.model,
+      this.dimensions
+    );
+  }
+
   static async probeDimension(
     host: string,
     model: string,

@@ -98,6 +98,12 @@ export async function runIndexPipeline(
 
   if (opts.metadataOnly || !opts.llm) return stats;
 
+  // Probe the embedding provider up-front so a mis-configured dimension
+  // or model fails before any summary spend is paid on the LLM.
+  if (opts.embedding?.probe) {
+    await opts.embedding.probe();
+  }
+
   const llm = opts.llm;
   const driveConcurrency =
     opts.driveConcurrency ?? opts.concurrency ?? DEFAULT_DRIVE_CONCURRENCY;
@@ -132,26 +138,36 @@ export async function runIndexPipeline(
         opts.store.initVectorTable(embedding.dimensions, {
           rebuild: opts.rebuildEmbeddings,
         });
+        if (opts.rebuildEmbeddings) {
+          // Vec0 table was dropped — every existing last_embedded_hash is
+          // now a lie. Reset so the filter below re-embeds everything once.
+          opts.store.clearEmbeddedHashes();
+        }
         const freshGraph = hydrateGraph(opts.store);
         const toEmbed = freshGraph
           .nodes()
           .map((nid) => freshGraph.getNodeAttributes(nid))
           .filter(
-            (n): n is typeof n & { extractedMd: string } =>
-              n.extractedMd != null
+            (n): n is typeof n & { extractedMd: string; contentHash: string } =>
+              n.extractedMd != null &&
+              n.contentHash != null &&
+              n.contentHash !== n.lastEmbeddedHash
           );
         if (toEmbed.length > 0) {
           const texts = toEmbed.map((n) =>
             n.extractedMd.slice(0, EMBED_WINDOW)
           );
           const vectors = await withBackoff(() => embedding.embed(texts));
+          let written = 0;
           for (let i = 0; i < toEmbed.length; i += 1) {
             const node = toEmbed[i];
             const vec = vectors[i];
             if (!node || !vec) continue;
             opts.store.upsertEmbedding(node.id, new Float32Array(vec));
+            opts.store.markEmbedded(node.id, node.contentHash);
+            written += 1;
           }
-          stats.embedded = toEmbed.length;
+          stats.embedded = written;
         }
       } catch (err) {
         stats.errors += 1;
@@ -212,6 +228,13 @@ async function processOne(p: ProcessOneParams): Promise<void> {
     return;
   }
 
+  // Phase 1 — Drive-bound: download + extract + hash. The drive permit is
+  // released as soon as this phase ends so concurrent downloads keep
+  // saturating the drive semaphore while phase-2 tasks wait on the LLM
+  // semaphore.
+  let markdown: string;
+  let downloadMime: string;
+  let hash: string;
   const releaseDrive = await driveSem.acquire();
   try {
     const destDir = join(workDir, node.id);
@@ -222,8 +245,8 @@ async function processOne(p: ProcessOneParams): Promise<void> {
       'auto',
       TEXT_EXPORT_MIME_MAP
     );
+    downloadMime = download.mimeType;
 
-    let markdown: string;
     if (
       download.mimeType === 'text/plain' ||
       download.mimeType === 'text/csv'
@@ -247,38 +270,46 @@ async function processOne(p: ProcessOneParams): Promise<void> {
     }
     stats.extracted += 1;
 
-    const hash = new Bun.CryptoHasher('sha256').update(markdown).digest('hex');
+    hash = new Bun.CryptoHasher('sha256').update(markdown).digest('hex');
     if (node.contentHash === hash && node.summary) {
       return;
-    }
-
-    const releaseLlm = await llmSem.acquire();
-    try {
-      const summary = await withBackoff(() =>
-        llm.summarize({
-          markdown,
-          filename: node.name,
-          path: nodePath(graph, node.id),
-          mimeType: download.mimeType,
-        })
-      );
-      opts.store.updateSummary(node.id, {
-        summary: summary.summary,
-        classification: summary.classification,
-        keyTopics: JSON.stringify(summary.keyTopics),
-        extractedMd: markdown,
-        contentHash: hash,
-      });
-      stats.summarized += 1;
-    } finally {
-      releaseLlm();
     }
   } catch (err) {
     stats.errors += 1;
     const message = err instanceof Error ? err.message : String(err);
     opts.store.recordError(node.id, message);
     warn(`index: node ${node.id} failed: ${message}`);
+    return;
   } finally {
     releaseDrive();
+  }
+
+  // Phase 2 — LLM-bound: summarize. Drive permit is already released, so
+  // other tasks can download while this one blocks on the LLM semaphore.
+  const releaseLlm = await llmSem.acquire();
+  try {
+    const summary = await withBackoff(() =>
+      llm.summarize({
+        markdown,
+        filename: node.name,
+        path: nodePath(graph, node.id),
+        mimeType: downloadMime,
+      })
+    );
+    opts.store.updateSummary(node.id, {
+      summary: summary.summary,
+      classification: summary.classification,
+      keyTopics: JSON.stringify(summary.keyTopics),
+      extractedMd: markdown,
+      contentHash: hash,
+    });
+    stats.summarized += 1;
+  } catch (err) {
+    stats.errors += 1;
+    const message = err instanceof Error ? err.message : String(err);
+    opts.store.recordError(node.id, message);
+    warn(`index: node ${node.id} failed: ${message}`);
+  } finally {
+    releaseLlm();
   }
 }

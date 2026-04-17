@@ -15,8 +15,11 @@ const guard = useEnvGuard([
   'GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL',
   'GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS',
   'GDRIVESCOPE_OPENAI_EMBEDDING_MODEL',
+  'GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS',
   'GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_MODEL',
+  'GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS',
   'GDRIVESCOPE_VOYAGE_MODEL',
+  'GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS',
 ]);
 
 describe('resolveEmbeddingProvider', () => {
@@ -186,6 +189,59 @@ describe('resolveEmbeddingProvider', () => {
       Bun.env.VOYAGE_API_KEY = 'v';
       const p = resolveEmbeddingProvider({ flagProvider: 'voyage' });
       expect(p.name).toBe('voyage');
+    });
+  });
+
+  describe('dimensions override', () => {
+    test('GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS overrides default', () => {
+      Bun.env.OPENAI_API_KEY = 'o';
+      Bun.env.GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS = '3072';
+      const p = resolveEmbeddingProvider({});
+      expect(p.dimensions).toBe(3072);
+    });
+
+    test('GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS overrides default', () => {
+      Bun.env.VOYAGE_API_KEY = 'v';
+      Bun.env.GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS = '1024';
+      const p = resolveEmbeddingProvider({ flagProvider: 'voyage' });
+      expect(p.dimensions).toBe(1024);
+    });
+
+    test('GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS overrides default', () => {
+      Bun.env.AZURE_OPENAI_API_KEY = 'az';
+      Bun.env.AZURE_OPENAI_ENDPOINT = 'https://test.openai.azure.com';
+      Bun.env.GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS = '3072';
+      const p = resolveEmbeddingProvider({ flagProvider: 'azure-openai' });
+      expect(p.dimensions).toBe(3072);
+    });
+
+    test('invalid env dimension value throws BAD_ARG', () => {
+      Bun.env.OPENAI_API_KEY = 'o';
+      Bun.env.GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS = 'not-a-number';
+      try {
+        resolveEmbeddingProvider({});
+        throw new Error('should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).code).toBe('BAD_ARG');
+      }
+    });
+
+    test('embeddingConfig.dimensions is used when env not set', () => {
+      Bun.env.OPENAI_API_KEY = 'o';
+      const p = resolveEmbeddingProvider({
+        embeddingConfig: { dimensions: 768 },
+      });
+      expect(p.dimensions).toBe(768);
+    });
+
+    test('env value wins over embeddingConfig.dimensions', () => {
+      Bun.env.OPENAI_API_KEY = 'o';
+      Bun.env.GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS = '3072';
+      const p = resolveEmbeddingProvider({
+        embeddingConfig: { dimensions: 768 },
+      });
+      expect(p.dimensions).toBe(3072);
     });
   });
 });

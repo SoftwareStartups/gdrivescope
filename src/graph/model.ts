@@ -29,6 +29,7 @@ export interface Node {
   keyTopics: string | null;
   extractedMd: string | null;
   contentHash: string | null;
+  lastEmbeddedHash: string | null;
   lastIndexed: string | null;
   lastError: string | null;
 }

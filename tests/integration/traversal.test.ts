@@ -92,4 +92,64 @@ describe('traverseDriveFolder', () => {
     });
     expect(first).toEqual(second);
   });
+
+  test('folder shortcuts: BFS descends into the target folder', async () => {
+    const tree: FakeTree = {
+      root: { id: 'root', name: 'Root', mimeType: FOLDER },
+      children: {
+        root: [
+          {
+            id: 'sc-folder',
+            name: 'shared-folder-shortcut',
+            mimeType: SHORTCUT,
+            shortcutDetails: {
+              targetId: 'target-folder',
+              targetMimeType: FOLDER,
+            },
+          },
+        ],
+        'target-folder': [
+          {
+            id: 'inside',
+            name: 'inside.pdf',
+            mimeType: 'application/pdf',
+            size: '100',
+          },
+        ],
+      },
+      targets: {
+        'target-folder': {
+          id: 'target-folder',
+          name: 'Shared Folder',
+          mimeType: FOLDER,
+        },
+      },
+    };
+    const { client, counters } = makeFakeDrive(tree);
+    const collected: DriveNodeInput[] = [];
+    const result = await traverseDriveFolder(client, {
+      rootId: 'root',
+      onNode: (n) => {
+        collected.push(n);
+      },
+    });
+
+    // root + shortcut-as-folder + inside.pdf = 3 visited
+    expect(result.visited).toBe(3);
+    expect(result.folders).toBe(2);
+    expect(result.files).toBe(1);
+
+    // The PDF inside the target folder is indexed (bug fix: previously dropped).
+    expect(collected.map((n) => n.id).sort()).toEqual([
+      'inside',
+      'root',
+      'sc-folder',
+    ]);
+    // BFS listed the target folder's contents, not the shortcut's id.
+    expect(counters.listedFolders.sort()).toEqual(['root', 'target-folder']);
+    // inside.pdf is anchored to the shortcut as its parent (traversal emits it
+    // with the id BFS used to fetch it, i.e. the target folder).
+    const inside = collected.find((n) => n.id === 'inside');
+    expect(inside?.parentId).toBe('target-folder');
+  });
 });

@@ -1,4 +1,8 @@
-import type { AzureConfig, OllamaConfig } from '../config/workspace.js';
+import type {
+  AzureConfig,
+  EmbeddingConfig,
+  OllamaConfig,
+} from '../config/workspace.js';
 import { CliError } from '../utils/errors.js';
 import { info } from '../utils/logging.js';
 import { AzureOpenaiEmbeddingProvider } from './azure-openai-embedding.js';
@@ -17,6 +21,7 @@ export interface ResolveEmbeddingOptions {
   flagProvider?: string;
   configProvider?: string;
   configModel?: string;
+  embeddingConfig?: EmbeddingConfig;
   ollamaConfig?: OllamaConfig;
   azureConfig?: AzureConfig;
 }
@@ -56,6 +61,31 @@ function resolveModel(
   return envModel ?? configModel ?? undefined;
 }
 
+function parseDimsEnv(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+    throw new CliError(
+      `Invalid embedding dimensions env var value: ${raw}`,
+      'BAD_ARG'
+    );
+  }
+  return n;
+}
+
+function resolveDimensions(
+  name: EmbeddingProviderName,
+  configDims?: number
+): number | undefined {
+  const envRaw = {
+    openai: Bun.env.GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS,
+    'azure-openai': Bun.env.GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS,
+    voyage: Bun.env.GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS,
+    ollama: undefined, // handled inline with the rest of the ollama config
+  }[name];
+  return parseDimsEnv(envRaw) ?? configDims ?? undefined;
+}
+
 export function resolveEmbeddingProvider(
   opts: ResolveEmbeddingOptions
 ): EmbeddingProvider {
@@ -89,6 +119,7 @@ export function resolveEmbeddingProvider(
   }
 
   const model = resolveModel(name, opts.configModel);
+  const dimensions = resolveDimensions(name, opts.embeddingConfig?.dimensions);
 
   if (name === 'openai') {
     const key = Bun.env.OPENAI_API_KEY;
@@ -98,7 +129,7 @@ export function resolveEmbeddingProvider(
         'PROVIDER_UNCONFIGURED'
       );
     }
-    return new OpenaiEmbeddingProvider({ apiKey: key, model });
+    return new OpenaiEmbeddingProvider({ apiKey: key, model, dimensions });
   }
 
   if (name === 'azure-openai') {
@@ -128,6 +159,7 @@ export function resolveEmbeddingProvider(
       apiVersion,
       deployment,
       model,
+      dimensions,
     });
   }
 
@@ -139,7 +171,7 @@ export function resolveEmbeddingProvider(
         'PROVIDER_UNCONFIGURED'
       );
     }
-    return new VoyageEmbeddingProvider({ apiKey: key, model });
+    return new VoyageEmbeddingProvider({ apiKey: key, model, dimensions });
   }
 
   // name === 'ollama' — no API key required, local service
@@ -149,13 +181,13 @@ export function resolveEmbeddingProvider(
     'http://localhost:11434';
   const ollamaModel =
     model ?? opts.ollamaConfig?.embeddingModel ?? 'nomic-embed-text';
-  const dimensions =
+  const ollamaDims =
     Number(Bun.env.GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS) ||
     opts.ollamaConfig?.embeddingDimensions ||
     768;
   return new OllamaEmbeddingProvider({
     host,
     model: ollamaModel,
-    dimensions,
+    dimensions: ollamaDims,
   });
 }
