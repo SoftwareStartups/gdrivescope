@@ -60,11 +60,16 @@ describe('gdrivescope index (integration)', () => {
 
     expect(response.ok).toBe(true);
     if (!response.ok) return;
-    expect(response.data.visited).toBe(7);
-    expect(response.data.folders).toBe(3);
-    expect(response.data.files).toBe(4);
-    expect(response.data.rootId).toBe('root');
-    expect(response.data.dbPath).toBe(dbPath);
+    expect(response.data.runs).toHaveLength(1);
+    const first = response.data.runs[0];
+    expect(first).toBeDefined();
+    if (!first) return;
+    expect(first.visited).toBe(7);
+    expect(first.folders).toBe(3);
+    expect(first.files).toBe(4);
+    expect(first.rootId).toBe('root');
+    expect(first.dbPath).toBe(dbPath);
+    expect(first.skippedRefs).toBe(0);
 
     const db = new Database(dbPath, { readonly: true });
     try {

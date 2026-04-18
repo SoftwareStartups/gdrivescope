@@ -120,20 +120,26 @@ describe('index command with configured root', () => {
     const first = await run({ scope: 'acme', 'metadata-only': true });
     expect(first.ok).toBe(true);
     if (!first.ok) return;
-    expect(first.data.rootId).toBe('company-root');
-    expect(first.data.rootLabel).toBe('Company Drive');
-    expect(first.data.ancestryPath).toEqual([
+    const firstRun = first.data.runs[0];
+    expect(firstRun).toBeDefined();
+    if (!firstRun) return;
+    expect(firstRun.rootId).toBe('company-root');
+    expect(firstRun.rootLabel).toBe('Company Drive');
+    expect(firstRun.ancestryPath).toEqual([
       'Company Drive',
       'Projects',
       'Acme',
     ]);
-    expect(first.data.usedFallback).toBe(false);
+    expect(firstRun.usedFallback).toBe(false);
 
     const second = await run({ scope: 'beta', 'metadata-only': true });
     expect(second.ok).toBe(true);
     if (!second.ok) return;
-    expect(second.data.rootId).toBe('company-root');
-    expect(second.data.ancestryPath).toEqual([
+    const secondRun = second.data.runs[0];
+    expect(secondRun).toBeDefined();
+    if (!secondRun) return;
+    expect(secondRun.rootId).toBe('company-root');
+    expect(secondRun.ancestryPath).toEqual([
       'Company Drive',
       'Projects',
       'Beta',
@@ -201,9 +207,12 @@ describe('index command with configured root', () => {
     const result = await run({ scope: 'acme', 'metadata-only': true });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.data.usedFallback).toBe(true);
-    expect(result.data.rootId).toBe('acme');
-    expect(result.data.rootLabel).toBe('Acme');
-    expect(result.data.ancestryPath).toEqual(['Acme']);
+    const only = result.data.runs[0];
+    expect(only).toBeDefined();
+    if (!only) return;
+    expect(only.usedFallback).toBe(true);
+    expect(only.rootId).toBe('acme');
+    expect(only.rootLabel).toBe('Acme');
+    expect(only.ancestryPath).toEqual(['Acme']);
   });
 });

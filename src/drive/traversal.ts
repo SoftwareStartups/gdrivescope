@@ -1,6 +1,7 @@
 import type { drive_v3 } from '@googleapis/drive';
 import type { DriveNodeInput } from '../graph/model.js';
 import { createSemaphore } from '../pipeline/concurrency.js';
+import { warn } from '../utils/logging.js';
 
 export interface TraverseOptions {
   /**
@@ -29,6 +30,10 @@ export interface TraverseResult {
   visited: number;
   folders: number;
   files: number;
+  /** Count of shortcut targets / folder listings skipped because Drive rejected
+   *  the fetch (missing file, permission revoked, etc.). Non-zero means the
+   *  tree is not fully indexed; detail lines were emitted to stderr via `warn`. */
+  skippedRefs: number;
 }
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder';
@@ -76,14 +81,23 @@ function checkAbort(signal: AbortSignal | undefined): void {
 async function resolveShortcut(
   client: drive_v3.Drive,
   shortcut: drive_v3.Schema$File
-): Promise<drive_v3.Schema$File> {
+): Promise<drive_v3.Schema$File | null> {
   const targetId = shortcut.shortcutDetails?.targetId;
   if (!targetId) return shortcut;
-  const target = await client.files.get({
-    fileId: targetId,
-    fields: SHORTCUT_TARGET_FIELDS,
-    supportsAllDrives: true,
-  });
+  let target: { data: drive_v3.Schema$File };
+  try {
+    target = await client.files.get({
+      fileId: targetId,
+      fields: SHORTCUT_TARGET_FIELDS,
+      supportsAllDrives: true,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    warn(
+      `traversal: shortcut "${shortcut.name ?? shortcut.id}" → ${targetId} unresolved (${message})`
+    );
+    return null;
+  }
   const data = target.data;
   return {
     id: shortcut.id,
@@ -135,6 +149,7 @@ export async function traverseDriveFolder(
   let visited = 0;
   let folders = 0;
   let files = 0;
+  let skippedRefs = 0;
 
   let bfsStartId: string;
 
@@ -168,11 +183,28 @@ export async function traverseDriveFolder(
   const visitFolder = async (folderId: string): Promise<void> => {
     const release = await sem.acquire();
     try {
-      const entries = await listChildren(client, folderId, opts.signal);
+      let entries: drive_v3.Schema$File[];
+      try {
+        entries = await listChildren(client, folderId, opts.signal);
+      } catch (err) {
+        // Abort signals are real failures the caller asked for — propagate.
+        if (err instanceof Error && err.message === 'traversal aborted') {
+          throw err;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        warn(`traversal: folder ${folderId} could not be listed (${message})`);
+        skippedRefs += 1;
+        return;
+      }
       for (const file of entries) {
-        let node = file;
+        let node: drive_v3.Schema$File = file;
         if (file.mimeType === SHORTCUT_MIME) {
-          node = await resolveShortcut(client, file);
+          const resolved = await resolveShortcut(client, file);
+          if (resolved === null) {
+            skippedRefs += 1;
+            continue;
+          }
+          node = resolved;
         }
         await opts.onNode(fileToNodeInput(node, folderId, anchor));
         visited += 1;
@@ -203,5 +235,5 @@ export async function traverseDriveFolder(
     await Promise.all(batch.map(visitFolder));
   }
 
-  return { visited, folders, files };
+  return { visited, folders, files, skippedRefs };
 }

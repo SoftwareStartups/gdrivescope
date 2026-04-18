@@ -4,6 +4,7 @@ import {
   resolveFolder,
   saveWorkspaceConfig,
   upsertRoot,
+  type WorkspaceConfig,
 } from '../../config/workspace.js';
 import { resolveAncestry } from '../../drive/ancestry.js';
 import { createDriveClient } from '../../drive/client.js';
@@ -38,7 +39,7 @@ export interface IndexFlags {
   'max-pdf-pages'?: string;
 }
 
-export interface IndexData {
+export interface IndexRunResult {
   rootId: string;
   rootLabel: string;
   scopeId: string;
@@ -53,7 +54,12 @@ export interface IndexData {
   skipped: number;
   errors: number;
   pruned: number;
+  skippedRefs: number;
   usedFallback: boolean;
+}
+
+export interface IndexData {
+  runs: IndexRunResult[];
 }
 
 export const HELP = `gdrivescope index — Build or refresh the persistent Drive graph
@@ -76,11 +82,16 @@ When one or more roots are configured in \`config.toml\`, indexing a deeper
 \`--scope\` folder also stitches the folder chain from the configured root
 down to the scope into the graph.
 
+When \`--scope\` is omitted, the command indexes every configured root from
+\`config.toml\`. With no configured roots and no \`--scope\`, it falls back to
+the \`root\` sentinel (My Drive top level).
+
 Usage:
   gdrivescope index [options]
 
 Options:
-  --scope <FOLDER_ID>          Start folder id or alias (default: \`root\`)
+  --scope <FOLDER_ID>          Start folder id or alias (default: every
+                               configured root, or \`root\` if none configured)
   --root <FOLDER_ID>           One-shot root override (bypasses config.toml)
   --add-root                   Persist the resolved root to config.toml
   --metadata-only              Skip extraction + LLM summarization + embeddings
@@ -145,14 +156,25 @@ function resolveMaxPdfPages(
   return DEFAULT_MAX_PDF_PAGES;
 }
 
+function resolveScopes(flags: IndexFlags, cfg: WorkspaceConfig): string[] {
+  if (flags.scope !== undefined) {
+    return [resolveFolder(cfg, flags.scope)];
+  }
+  if (flags.root !== undefined) {
+    return [flags.root];
+  }
+  if (cfg.roots.length > 0) {
+    return cfg.roots.map((r) => r.id);
+  }
+  return ['root'];
+}
+
 export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
   const dbPath = getDbPath();
   const store = openStore(dbPath);
   try {
     const cfg = await loadWorkspaceConfig();
     const client = await createDriveClient();
-    const rawScope = flags.scope ?? 'root';
-    const scopeId = resolveFolder(cfg, rawScope);
     const driveConcurrency =
       parseOptionalPositiveInt(
         'concurrency-drive',
@@ -196,81 +218,90 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       ? [{ id: flags.root }]
       : cfg.roots;
 
-    const ancestry = await resolveAncestry(client, scopeId, configuredRoots);
+    const scopes = resolveScopes(flags, cfg);
+    let cfgForAddRoot = cfg;
+    const runs: IndexRunResult[] = [];
 
-    if (ancestry.usedFallback && configuredRoots.length > 0) {
-      warn(
-        `scope ${scopeId} is not under any configured root; indexing as a standalone tree. ` +
-          'Add it with: gdrivescope config add-root <FOLDER_ID>'
-      );
-    }
+    for (const scopeId of scopes) {
+      const ancestry = await resolveAncestry(client, scopeId, configuredRoots);
 
-    // Emit ancestor chain first (root → scope.parent), then scope itself,
-    // then let the pipeline pick up descendants from the scope node.
-    for (const node of ancestry.chain) {
-      store.upsertNode(node);
-    }
-    store.upsertNode(ancestry.scope);
+      if (ancestry.usedFallback && configuredRoots.length > 0) {
+        warn(
+          `scope ${scopeId} is not under any configured root; indexing as a standalone tree. ` +
+            'Add it with: gdrivescope config add-root <FOLDER_ID>'
+        );
+      }
 
-    const stats = await runIndexPipeline({
-      store,
-      client,
-      rootId: ancestry.scope.id,
-      anchorRootId: ancestry.rootId,
-      scopeNode: ancestry.scope,
-      driveConcurrency,
-      llmConcurrency,
-      resume: flags.resume === true,
-      prune: flags.prune === true,
-      metadataOnly,
-      llm,
-      embedding,
-      rebuildEmbeddings: flags['rebuild-embeddings'] === true,
-      maxSizeBytes,
-      maxPdfPages,
-    });
+      // Emit ancestor chain first (root → scope.parent), then scope itself,
+      // then let the pipeline pick up descendants from the scope node.
+      for (const node of ancestry.chain) {
+        store.upsertNode(node);
+      }
+      store.upsertNode(ancestry.scope);
 
-    // +1 for the scope emitted ahead of the pipeline; pipeline counts descendants.
-    const visited = stats.visited + 1 + ancestry.chain.length;
-    const folders = stats.folders + 1 + ancestry.chain.length;
-    const files = stats.files;
-
-    store.setMeta('last_index_run', new Date().toISOString());
-
-    if (flags['add-root'] && !ancestry.usedFallback) {
-      const updated = upsertRoot(cfg, {
-        id: ancestry.rootId,
-        label: ancestry.rootLabel,
+      const stats = await runIndexPipeline({
+        store,
+        client,
+        rootId: ancestry.scope.id,
+        anchorRootId: ancestry.rootId,
+        scopeNode: ancestry.scope,
+        driveConcurrency,
+        llmConcurrency,
+        resume: flags.resume === true,
+        prune: flags.prune === true,
+        metadataOnly,
+        llm,
+        embedding,
+        rebuildEmbeddings: flags['rebuild-embeddings'] === true,
+        maxSizeBytes,
+        maxPdfPages,
       });
-      await saveWorkspaceConfig(updated);
+
+      // +1 for the scope emitted ahead of the pipeline; pipeline counts descendants.
+      const visited = stats.visited + 1 + ancestry.chain.length;
+      const folders = stats.folders + 1 + ancestry.chain.length;
+      const files = stats.files;
+
+      store.setMeta('last_index_run', new Date().toISOString());
+
+      if (flags['add-root'] && !ancestry.usedFallback) {
+        cfgForAddRoot = upsertRoot(cfgForAddRoot, {
+          id: ancestry.rootId,
+          label: ancestry.rootLabel,
+        });
+        await saveWorkspaceConfig(cfgForAddRoot);
+      }
+
+      const ancestryPath = [
+        ...ancestry.chain.map((n) => n.name),
+        ancestry.scope.name,
+      ];
+      const displayPath =
+        ancestry.chain.length === 0
+          ? [ancestry.rootLabel]
+          : [ancestry.rootLabel, ...ancestryPath.slice(1)];
+
+      runs.push({
+        rootId: ancestry.rootId,
+        rootLabel: ancestry.rootLabel,
+        scopeId: ancestry.scope.id,
+        ancestryPath: displayPath,
+        dbPath,
+        visited,
+        folders,
+        files,
+        extracted: stats.extracted,
+        summarized: stats.summarized,
+        embedded: stats.embedded,
+        skipped: stats.skipped,
+        errors: stats.errors,
+        pruned: stats.pruned,
+        skippedRefs: stats.skippedRefs,
+        usedFallback: ancestry.usedFallback,
+      });
     }
 
-    const ancestryPath = [
-      ...ancestry.chain.map((n) => n.name),
-      ancestry.scope.name,
-    ];
-    const displayPath =
-      ancestry.chain.length === 0
-        ? [ancestry.rootLabel]
-        : [ancestry.rootLabel, ...ancestryPath.slice(1)];
-
-    return success({
-      rootId: ancestry.rootId,
-      rootLabel: ancestry.rootLabel,
-      scopeId: ancestry.scope.id,
-      ancestryPath: displayPath,
-      dbPath,
-      visited,
-      folders,
-      files,
-      extracted: stats.extracted,
-      summarized: stats.summarized,
-      embedded: stats.embedded,
-      skipped: stats.skipped,
-      errors: stats.errors,
-      pruned: stats.pruned,
-      usedFallback: ancestry.usedFallback,
-    });
+    return success({ runs });
   } catch (err) {
     return toResponse(err);
   } finally {
@@ -278,25 +309,43 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
   }
 }
 
-export function render(data: IndexData): string {
-  const path = data.ancestryPath.join(' / ');
+function renderRun(run: IndexRunResult): string {
+  const path = run.ancestryPath.join(' / ');
   const lines = [
-    `Indexed ${data.visited} node(s) under ${path}`,
-    `  root:       ${data.rootLabel} (${data.rootId})`,
-    `  folders:    ${data.folders}`,
-    `  files:      ${data.files}`,
-    `  extracted:  ${data.extracted}`,
-    `  summarized: ${data.summarized}`,
-    `  embedded:   ${data.embedded}`,
-    `  skipped:    ${data.skipped}`,
-    `  errors:     ${data.errors}`,
-    `  pruned:     ${data.pruned}`,
-    `  db:         ${data.dbPath}`,
+    `Indexed ${run.visited} node(s) under ${path}`,
+    `  root:        ${run.rootLabel} (${run.rootId})`,
+    `  folders:     ${run.folders}`,
+    `  files:       ${run.files}`,
+    `  extracted:   ${run.extracted}`,
+    `  summarized:  ${run.summarized}`,
+    `  embedded:    ${run.embedded}`,
+    `  skipped:     ${run.skipped}`,
+    `  errors:      ${run.errors}`,
+    `  pruned:      ${run.pruned}`,
   ];
-  if (data.usedFallback) {
+  if (run.skippedRefs > 0) {
     lines.push(
-      '  note:       scope is not under any configured root — indexed as a standalone tree'
+      `  skipped-refs: ${run.skippedRefs}  (broken shortcuts / unlistable folders — see warnings above)`
+    );
+  }
+  lines.push(`  db:          ${run.dbPath}`);
+  if (run.usedFallback) {
+    lines.push(
+      '  note:        scope is not under any configured root — indexed as a standalone tree'
     );
   }
   return lines.join('\n');
+}
+
+export function render(data: IndexData): string {
+  if (data.runs.length === 0) {
+    return 'No scopes indexed.';
+  }
+  if (data.runs.length === 1) {
+    const only = data.runs[0];
+    if (only) return renderRun(only);
+  }
+  return data.runs
+    .map((run) => `=== ${run.rootLabel} ===\n${renderRun(run)}`)
+    .join('\n\n');
 }

@@ -57,13 +57,18 @@ tasks:
       - task: test
 
   compile:
-    desc: Compile to standalone binary
+    desc: Compile to standalone binary (ad-hoc signs on macOS so the kernel doesn't SIGKILL)
     cmds:
       - mkdir -p dist
       - bun build src/index.ts --compile --outfile dist/gdrivescope
+      - |
+        if [ "$(uname)" = "Darwin" ]; then
+          codesign --remove-signature dist/gdrivescope 2>/dev/null || true
+          codesign --force --sign - dist/gdrivescope
+        fi
 
   compile:all:
-    desc: Compile for all platforms
+    desc: Compile for all platforms (ad-hoc signs darwin outputs when run on macOS)
     cmds:
       - mkdir -p dist
       - bun build src/index.ts --compile --target=bun-linux-x64 --outfile dist/gdrivescope-linux-x64
@@ -72,6 +77,13 @@ tasks:
       - bun build src/index.ts --compile --target=bun-darwin-arm64 --outfile dist/gdrivescope-darwin-arm64
       - bun build src/index.ts --compile --target=bun-windows-x64 --outfile dist/gdrivescope-windows-x64.exe
       - bun build src/index.ts --compile --target=bun-windows-arm64 --outfile dist/gdrivescope-windows-arm64.exe
+      - |
+        if [ "$(uname)" = "Darwin" ]; then
+          for bin in dist/gdrivescope-darwin-x64 dist/gdrivescope-darwin-arm64; do
+            codesign --remove-signature "$bin" 2>/dev/null || true
+            codesign --force --sign - "$bin"
+          done
+        fi
 
   ci:
     desc: Run full CI pipeline locally

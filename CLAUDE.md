@@ -58,6 +58,27 @@ task compile                         # Build standalone binary for current platf
 task compile:all                     # Build binaries for all 6 platforms
 ```
 
+### macOS binary signing (local compile)
+
+`bun build --compile` on macOS 15+ writes an `LC_CODE_SIGNATURE` load command
+but leaves the signature section malformed. The kernel on macOS Sequoia+ (incl.
+macOS 26 Tahoe) then SIGKILLs the unsigned arm64 binary as soon as it runs —
+`dist/gdrivescope` exits 137 with no error.
+
+`task compile` and `task compile:all` handle this automatically on macOS by
+stripping the placeholder and ad-hoc signing:
+
+```bash
+codesign --remove-signature dist/gdrivescope 2>/dev/null || true
+codesign --force --sign - dist/gdrivescope
+```
+
+GitHub release binaries don't need this step — the `macos-15` runner's linker
+adds the `adhoc,linker-signed` flag automatically during compile. If
+`task compile` ever stops signing, use `codesign -dv dist/gdrivescope` to
+confirm; a signed binary reports `Signature=adhoc`. The Linux/Windows targets
+in `compile:all` are unaffected.
+
 ## Architecture
 
 ```
