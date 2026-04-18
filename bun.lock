@@ -7,8 +7,7 @@
       "dependencies": {
         "@anthropic-ai/sdk": "^0.88.0",
         "@googleapis/drive": "^20.1.0",
-        "@kreuzberg/node": "^4.8.5",
-        "@kreuzberg/wasm": "^4.8.5",
+        "@kreuzberg/wasm": "^4.8.6",
         "google-auth-library": "^10.6.2",
         "graphology": "^0.26.0",
         "graphology-operators": "^1.6.1",
@@ -49,21 +48,9 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.4.10", "", { "os": "win32", "cpu": "x64" }, "sha512-aW/JU5GuyH4uxMrNYpoC2kjaHlyJGLgIa3XkhPEZI0uKhZhJZU8BuEyJmvgzSPQNGozBwWjC972RaNdcJ9KyJg=="],
 
-    "@emnapi/runtime": ["@emnapi/runtime@1.9.2", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-3U4+MIWHImeyu1wnmVygh5WlgfYDtyf0k8AbLhMFxOipihf6nrWC4syIm/SwEeec0mNSafiiNnMJwbza/Is6Lw=="],
-
     "@googleapis/drive": ["@googleapis/drive@20.1.0", "", { "dependencies": { "googleapis-common": "^8.0.0" } }, "sha512-8/gapeLuZ3igooEGLE1AL3Zp5fjqigZQNmyjehb4QF7JVJh6FXF+72AcQGGsFypwJb2S68HIuQFomHBw4RJSOg=="],
 
-    "@kreuzberg/node": ["@kreuzberg/node@4.8.5", "", { "dependencies": { "@emnapi/runtime": "1.9.2", "which": "^6.0.1" }, "optionalDependencies": { "@kreuzberg/node-darwin-arm64": "4.8.5", "@kreuzberg/node-linux-arm64-gnu": "4.8.5", "@kreuzberg/node-linux-x64-gnu": "4.8.5", "@kreuzberg/node-win32-x64-msvc": "4.8.5" }, "bin": { "kreuzberg": "dist/cli.js" } }, "sha512-xUBVBKfYJBN9kW7un4wtWkFQQMwwr+a0V1MRMNmb6JDPozUMdmEVMx1JARr5LvQPAdWIkt9G6EXSws8C1pk+TQ=="],
-
-    "@kreuzberg/node-darwin-arm64": ["@kreuzberg/node-darwin-arm64@4.8.5", "", { "os": "darwin", "cpu": "arm64" }, "sha512-JcLEidAhtznq5dkgWLztKRDCtWBrAdO+pI/Leff8ZBEXsVd4jZieq7im6+UebBtlZLU7l63IvgIHZUfXMK3gMw=="],
-
-    "@kreuzberg/node-linux-arm64-gnu": ["@kreuzberg/node-linux-arm64-gnu@4.8.5", "", { "os": "linux", "cpu": "arm64" }, "sha512-N236zBfq+LYN32CGUYA0m5PHlU6994mmnucumWbYB5xpx8e/4JS4mFYLtiU3UroAETo4EjxDtbS64tE+Ja+NOQ=="],
-
-    "@kreuzberg/node-linux-x64-gnu": ["@kreuzberg/node-linux-x64-gnu@4.8.5", "", { "os": "linux", "cpu": "x64" }, "sha512-Tew5wujBza/gEDhgF23pYVFWtxwDHJoLfT+KqPJ1+ubd7Zw/kwTM7MAb3V2oyjSCLMhPdQ/j9Ezw0JifW2Tw7w=="],
-
-    "@kreuzberg/node-win32-x64-msvc": ["@kreuzberg/node-win32-x64-msvc@4.8.5", "", { "os": "win32", "cpu": "x64" }, "sha512-VRjLHEFgwJljdbpmlAOG/6OTvwK6FSQsqRF5jEcdhaXPep1NiqCCF9c6lazEllbiw8c/ZUc79BXQ/hcq0mI4qA=="],
-
-    "@kreuzberg/wasm": ["@kreuzberg/wasm@4.8.5", "", { "optionalDependencies": { "tesseract-wasm": "^0.11.0" } }, "sha512-9oodFghE3q5DogDVbbsTpGElxamqvYMxm83RRBFsNDJALtVreFeQNqx+Sh8VVyGbVsLsGfBcTdyQoGMB1CT9vA=="],
+    "@kreuzberg/wasm": ["@kreuzberg/wasm@4.8.6", "", { "optionalDependencies": { "tesseract-wasm": "^0.11.0" } }, "sha512-ss1dgz+DSkv/JQSm7xWnaYR6JMHF9NU8ki2UVfiXICjYOVVbWh0e1GF+Fya+h5wbobaslbIp5VtY8zyI2lFd7A=="],
 
     "@pdf-lib/standard-fonts": ["@pdf-lib/standard-fonts@1.0.0", "", { "dependencies": { "pako": "^1.0.6" } }, "sha512-hU30BK9IUN/su0Mn9VdlVKsWBS6GyhVfqjwl1FjZN4TxP6cCw0jP2w7V3Hf5uX7M0AZJ16vey9yE0ny7Sa59ZA=="],
 
@@ -146,8 +133,6 @@
     "hasown": ["hasown@2.0.2", "", { "dependencies": { "function-bind": "^1.1.2" } }, "sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ=="],
 
     "https-proxy-agent": ["https-proxy-agent@7.0.6", "", { "dependencies": { "agent-base": "^7.1.2", "debug": "4" } }, "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw=="],
-
-    "isexe": ["isexe@4.0.0", "", {}, "sha512-FFUtZMpoZ8RqHS3XeXEmHWLA4thH+ZxCv2lOiPIn1Xc7CxrqhWzNSDzD+/chS/zbYezmiwWLdQC09JdQKmthOw=="],
 
     "json-bigint": ["json-bigint@1.0.0", "", { "dependencies": { "bignumber.js": "^9.0.0" } }, "sha512-SiPv/8VpZuWbvLSMtTDU8hEfrZWg/mH/nV/b4o0CYbSxu1UIQPLdwKOCIyLQX+VIPO5vrLX3i8qtqFyhdPSUSQ=="],
 
@@ -238,9 +223,5 @@
     "url-template": ["url-template@2.0.8", "", {}, "sha512-XdVKMF4SJ0nP/O7XIPB0JwAEuT9lDIYnNsK8yGVe43y0AWoKeJNdv3ZNWh7ksJ6KqQFjOO6ox/VEitLnaVNufw=="],
 
     "web-streams-polyfill": ["web-streams-polyfill@3.3.3", "", {}, "sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw=="],
-
-    "which": ["which@6.0.1", "", { "dependencies": { "isexe": "^4.0.0" }, "bin": { "node-which": "bin/which.js" } }, "sha512-oGLe46MIrCRqX7ytPUf66EAYvdeMIZYn3WaocqqKZAxrBpkqHfL/qvTyJ/bTk5+AqHCjXmrv3CEWgy368zhRUg=="],
-
-    "@emnapi/runtime/tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
   }
 }

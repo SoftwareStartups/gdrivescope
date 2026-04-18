@@ -46,8 +46,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
     "@googleapis/drive": "^20.1.0",
-    "@kreuzberg/node": "^4.8.5",
-    "@kreuzberg/wasm": "^4.8.5",
+    "@kreuzberg/wasm": "^4.8.6",
     "google-auth-library": "^10.6.2",
     "graphology": "^0.26.0",
     "graphology-operators": "^1.6.1",

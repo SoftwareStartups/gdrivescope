@@ -47,9 +47,9 @@ export const read_block_from_callback_wasm: (a: number, b: number, c: number, d:
 export const write_block_from_callback_wasm: (a: number, b: number, c: number) => number;
 export const compress: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const decompress: (a: any, b: number, c: number, d: any) => [number, number];
-export const wasm_bindgen__convert__closures_____invoke__ha785dc36a6aa08a3: (a: number, b: number, c: any) => [number, number];
-export const wasm_bindgen__convert__closures_____invoke__h1ff1c7c882812eec: (a: number, b: number, c: any, d: any) => void;
-export const wasm_bindgen__convert__closures_____invoke__h86ba804b7aa7aa54: (a: number, b: number, c: any) => void;
+export const wasm_bindgen__convert__closures_____invoke__h5215b8a0c757b23d: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen__convert__closures_____invoke__h3dc7beed0ad802e0: (a: number, b: number, c: any, d: any) => void;
+export const wasm_bindgen__convert__closures_____invoke__hd6831132537f66d2: (a: number, b: number, c: any) => void;
 export const __wbindgen_externrefs: WebAssembly.Table;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

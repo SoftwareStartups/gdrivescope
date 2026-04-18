@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Patch @kreuzberg/wasm so it works inside `bun build --compile`.
 //
-// Why: upstream `@kreuzberg/wasm@4.8.5` publishes a wasm-bindgen glue module
+// Why: upstream `@kreuzberg/wasm@4.8.6` publishes a wasm-bindgen glue module
 // compiled with `wasm-pack --target web`. That glue contains a top-level
 //   `const wasmUrl = new URL('kreuzberg_wasm_bg.wasm', import.meta.url);`
 //   `await WebAssembly.instantiateStreaming(fetch(wasmUrl), ...)`
