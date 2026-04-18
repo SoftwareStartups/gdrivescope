@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { drive_v3 } from '@googleapis/drive';
 import { saveWorkspaceConfig } from '../../src/config/workspace.js';
+import { stubVault } from '../helpers/fakeVault.js';
 
 const FOLDER = 'application/vnd.google-apps.folder';
 
@@ -99,8 +100,10 @@ describe('gdrivescope index default-scope resolution', () => {
   let tmpDir: string;
   let dbPath: string;
   let configPath: string;
+  let restoreVault: (() => void) | undefined;
 
   beforeEach(() => {
+    restoreVault = stubVault();
     tmpDir = mkdtempSync(join(tmpdir(), 'gdrivescope-default-'));
     dbPath = join(tmpDir, 'drive.db');
     configPath = join(tmpDir, 'config.toml');
@@ -112,6 +115,8 @@ describe('gdrivescope index default-scope resolution', () => {
     delete Bun.env.GDRIVESCOPE_DB;
     delete Bun.env.GDRIVESCOPE_CONFIG;
     rmSync(tmpDir, { recursive: true, force: true });
+    restoreVault?.();
+    restoreVault = undefined;
   });
 
   test('single configured root is used when --scope is omitted', async () => {

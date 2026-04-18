@@ -59,4 +59,13 @@ describe('ensureScope', () => {
       spy.mockRestore();
     }
   });
+
+  test('full scope satisfies a metadata-only requirement (hierarchy)', async () => {
+    const spy = mockVault(vaultValue(SCOPE_FULL));
+    try {
+      await ensureScope(SCOPE_METADATA);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

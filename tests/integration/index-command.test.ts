@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeFakeDrive } from '../helpers/fakeDrive.js';
+import { stubVault } from '../helpers/fakeVault.js';
 
 const FOLDER = 'application/vnd.google-apps.folder';
 const SHORTCUT = 'application/vnd.google-apps.shortcut';
@@ -42,8 +43,10 @@ mock.module('../../src/drive/client.js', () => ({
 describe('gdrivescope index (integration)', () => {
   let tmpDir: string;
   let dbPath: string;
+  let restoreVault: (() => void) | undefined;
 
   beforeEach(() => {
+    restoreVault = stubVault();
     tmpDir = mkdtempSync(join(tmpdir(), 'gdrivescope-index-'));
     dbPath = join(tmpDir, 'drive.db');
     Bun.env.GDRIVESCOPE_DB = dbPath;
@@ -52,6 +55,8 @@ describe('gdrivescope index (integration)', () => {
   afterEach(() => {
     delete Bun.env.GDRIVESCOPE_DB;
     rmSync(tmpDir, { recursive: true, force: true });
+    restoreVault?.();
+    restoreVault = undefined;
   });
 
   test('populates the nodes table and returns an ok envelope', async () => {

@@ -59,7 +59,9 @@ gdrivescope uses two Drive scopes depending on what you ask it to do:
 | Scope | What it allows | Commands that need it |
 |-------|----------------|-----------------------|
 | `https://www.googleapis.com/auth/drive.metadata.readonly` | List folders, read file metadata (name, size, mime, path, ancestry) | `list`, `tree`, `config *`, `index --metadata-only` |
-| `https://www.googleapis.com/auth/drive.readonly` | Above + download file content and export Google Workspace docs | `index` (default), `download`, `show`, `search` |
+| `https://www.googleapis.com/auth/drive.readonly` | Everything `drive.metadata.readonly` grants, plus download file content and export Google Workspace docs | `index` (default), `download`, `show`, `search` — and any metadata-only command above |
+
+`drive.readonly` is a superset of `drive.metadata.readonly`: a session authorized with `drive.readonly` can run every command, including `--metadata-only` flows, without re-logging in.
 
 In Cloud Console → **APIs & Services → OAuth consent screen → Scopes**, add both scopes. `drive.readonly` is the one required for content indexing; without it, `files.get?alt=media` and `files.export` return HTTP 403 `appNotAuthorizedToFile` for every file.
 
@@ -118,7 +120,7 @@ gdrivescope login
 gdrivescope login --scope drive.readonly
 ```
 
-The default `gdrivescope login` requests only the `drive.metadata.readonly` scope, which is enough to list folders and read file metadata. To download file content — required by `index` without `--metadata-only`, `download`, `show`, and any search that renders content — re-run with `--scope drive.readonly`. Running `index` against a metadata-only session fails fast with a `SCOPE_REQUIRED` error.
+The default `gdrivescope login` requests only the `drive.metadata.readonly` scope, which is enough to list folders and read file metadata. To download file content — required by `index` without `--metadata-only`, `download`, `show`, and any search that renders content — re-run with `--scope drive.readonly`. That broader scope also covers every metadata-only flow, so once you have it you never need to re-login just to run `--metadata-only`. Running content-downloading commands against a metadata-only session fails fast with a `SCOPE_REQUIRED` error.
 
 The login command resolves your Google OAuth client id and secret through a cascade:
 
@@ -409,7 +411,7 @@ Manage roots via `gdrivescope config add-root` / `config remove-root`.
 
 **Auth errors** — Run `gdrivescope logout` then `gdrivescope login` to re-authorize. Ensure your Google OAuth client has the `drive.readonly` scope enabled in the Google Cloud console.
 
-**`SCOPE_REQUIRED` on `index`** — Your current session was authorized with `drive.metadata.readonly`, which cannot download file content. Re-authorize with `gdrivescope login --scope drive.readonly`, or pass `--metadata-only` to `index` if you only need the folder/file metadata graph.
+**`SCOPE_REQUIRED` on `index`** — Your current session was authorized with `drive.metadata.readonly`, which cannot download file content. Re-authorize with `gdrivescope login --scope drive.readonly`, or pass `--metadata-only` to `index` if you only need the folder/file metadata graph. A session authorized with `drive.readonly` already covers both paths — you should never see this error on a `drive.readonly` session.
 
 **`appNotAuthorizedToFile` 403 during `index`** — The OAuth app cannot read a specific file's content. Two causes:
 
