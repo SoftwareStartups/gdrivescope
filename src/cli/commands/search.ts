@@ -8,21 +8,28 @@ import { success } from '../../models/api-response.js';
 import { semanticSearch } from '../../search/vector-search.js';
 import { getDbPath } from '../../utils/config.js';
 import { CliError, toResponse } from '../../utils/errors.js';
+import {
+  classifyNodeType,
+  isNodeType,
+  NODE_TYPES,
+  type NodeType,
+} from '../../utils/node-type.js';
 import { parsePositiveInt } from '../../utils/parse.js';
 
-export type FileSearchMode = 'name' | 'semantic';
+export type SearchMode = 'name' | 'semantic';
 
-export interface FileSearchFlags {
+export interface SearchFlags {
   _positional?: string;
   classification?: string;
   scope?: string;
   limit?: string;
   threshold?: string;
-  mode?: FileSearchMode;
+  mode?: SearchMode;
+  type?: string;
   'embedding-provider'?: string;
 }
 
-export interface FileSearchHit {
+export interface SearchHit {
   id: string;
   name: string;
   mimeType: string;
@@ -31,26 +38,31 @@ export interface FileSearchHit {
   classification?: string | null;
 }
 
-export interface FileSearchData {
+export interface SearchData {
   query: string;
-  mode: FileSearchMode;
-  hits: FileSearchHit[];
+  mode: SearchMode;
+  type: NodeType | null;
+  hits: SearchHit[];
 }
 
-export const HELP = `gdrivescope file search — Search the indexed graph
+export const HELP = `gdrivescope search — Search the indexed graph
 
 Runs in one of two modes:
 - semantic (default when embeddings exist): cosine-similarity search over the
   vector table populated by \`gdrivescope index\`. Requires an embedding
   provider to embed the query.
-- name (Stage 4 fallback): substring match on file name, ranked by exactness
+- name (Stage 4 fallback): substring match on entry name, ranked by exactness
   and length. Used automatically when no embeddings are present.
 
 Usage:
-  gdrivescope file search <QUERY> [options]
+  gdrivescope search <QUERY> [options]
 
 Options:
   --mode <name|semantic>       Force a specific backend (default: auto)
+  --type <KIND>                Filter by node kind: ${NODE_TYPES.join(' | ')}
+                               Note: only \`file\` entries are embedded, so
+                               \`--type folder|shortcut|other\` in semantic
+                               mode returns no hits — pair with \`--mode name\`.
   --classification <VAL>       Filter by classification
   --scope <FOLDER_ID>          Restrict to descendants of a folder
   --limit <N>                  Max hits (default 20)
@@ -75,19 +87,31 @@ function parseThreshold(value: string | undefined): number | undefined {
   return n;
 }
 
+function parseTypeFilter(value: string | undefined): NodeType | null {
+  if (value === undefined) return null;
+  if (!isNodeType(value)) {
+    throw new CliError(
+      `invalid --type value: ${value} (expected ${NODE_TYPES.join('|')})`,
+      'USAGE'
+    );
+  }
+  return value;
+}
+
 export async function run(
-  flags: FileSearchFlags
-): Promise<ApiResponse<FileSearchData>> {
+  flags: SearchFlags
+): Promise<ApiResponse<SearchData>> {
   if (!flags._positional) {
     return toResponse(
-      new CliError('Usage: gdrivescope file search <QUERY>', 'MISSING_ARG')
+      new CliError('Usage: gdrivescope search <QUERY>', 'MISSING_ARG')
     );
   }
   const positional = flags._positional;
   try {
+    const type = parseTypeFilter(flags.type);
     return await withStoreAsync(getDbPath(), async (store) => {
       const hasEmbeddings = store.hasVectorTable();
-      const mode: FileSearchMode =
+      const mode: SearchMode =
         flags.mode ?? (hasEmbeddings ? 'semantic' : 'name');
       const limit = parsePositiveInt('limit', flags.limit, 20);
 
@@ -121,14 +145,19 @@ export async function run(
         return success({
           query: positional,
           mode,
-          hits: hits.map((h) => ({
-            id: h.id,
-            name: h.name,
-            mimeType: h.mimeType,
-            path: h.path,
-            score: h.score,
-            classification: h.classification,
-          })),
+          type,
+          hits: hits
+            .filter((h) =>
+              type ? classifyNodeType(h.mimeType) === type : true
+            )
+            .map((h) => ({
+              id: h.id,
+              name: h.name,
+              mimeType: h.mimeType,
+              path: h.path,
+              score: h.score,
+              classification: h.classification,
+            })),
         });
       }
 
@@ -139,7 +168,7 @@ export async function run(
 
       const rows = store.searchByName(query, flags.classification ?? undefined);
 
-      const hits: FileSearchHit[] = rows
+      const hits: SearchHit[] = rows
         .map((r) => ({
           id: r.id,
           name: r.name,
@@ -149,6 +178,7 @@ export async function run(
           classification: r.classification,
         }))
         .filter((h) => (scopeSet ? scopeSet.has(h.id) : true))
+        .filter((h) => (type ? classifyNodeType(h.mimeType) === type : true))
         .sort((a, b) => {
           const aExact = a.name.toLowerCase() === query;
           const bExact = b.name.toLowerCase() === query;
@@ -159,18 +189,19 @@ export async function run(
         })
         .slice(0, limit);
 
-      return success({ query: positional, mode: 'name', hits });
+      return success({ query: positional, mode: 'name', type, hits });
     });
   } catch (err) {
     return toResponse(err);
   }
 }
 
-export function render(data: FileSearchData): string {
+export function render(data: SearchData): string {
+  const filterSuffix = data.type ? `, type=${data.type}` : '';
   if (data.hits.length === 0) {
-    return `No matches for "${data.query}" (${data.mode} mode).`;
+    return `No matches for "${data.query}" (${data.mode} mode${filterSuffix}).`;
   }
-  const header = `${data.hits.length} hit(s) for "${data.query}" (${data.mode} mode):`;
+  const header = `${data.hits.length} hit(s) for "${data.query}" (${data.mode} mode${filterSuffix}):`;
   const rows = data.hits.map((h) => {
     const score = h.score !== null ? `  [${h.score.toFixed(3)}]` : '';
     return `  ${h.path}  (${h.mimeType})${score}`;

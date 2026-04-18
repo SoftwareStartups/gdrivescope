@@ -107,75 +107,88 @@ gdrivescope --json config add-root FOLDER_ID --label "Shared Drive" | jq '.data'
 gdrivescope --json config remove-root FOLDER_ID | jq '.data'
 ```
 
-## File
+## Graph
 
-### file list
+### list
 
 ```
-gdrivescope file list [FOLDER_ID] [flags]
+gdrivescope list [FOLDER_ID] [flags]
 ```
 
 | Flag | Args | Purpose |
 |------|------|---------|
 | `-r, --recursive` | | Recurse into subfolders |
+| `--type` | `folder\|file\|shortcut\|other` | Filter by node kind |
 | `--limit` | `<N>` | Max rows (default: 200) |
+
+Node kinds: `folder` (Drive folders), `file` (extractable content — Docs, PDFs, Office), `shortcut` (Drive shortcuts), `other` (forms / sites / images / audio / video).
 
 ```bash
 # List root
-gdrivescope --json file list | jq '.data[] | {id, name}'
+gdrivescope --json list | jq '.data.files[] | {id, name}'
 
 # List folder recursively
-gdrivescope --json file list FOLDER_ID -r | jq '.data[] | {id, name, mime_type}'
+gdrivescope --json list FOLDER_ID -r | jq '.data.files[] | {id, name, mimeType}'
+
+# Only folders
+gdrivescope --json list FOLDER_ID -r --type folder | jq '.data.files[] | {id, name}'
+
+# Only extractable files
+gdrivescope --json list FOLDER_ID -r --type file | jq '.data.files[] | {id, name, mimeType}'
 
 # Limit output
-gdrivescope --json file list FOLDER_ID -r --limit 50 | jq '.data | length'
+gdrivescope --json list FOLDER_ID -r --limit 50 | jq '.data.files | length'
 ```
 
-### file show
+### show
 
 ```
-gdrivescope file show <ID>
+gdrivescope show <ID>
 ```
 
 ```bash
-gdrivescope --json file show FILE_ID | jq '.data | {name, path, mime_type, summary, key_topics}'
+gdrivescope --json show FILE_ID | jq '.data | {name: .node.name, path, mime: .node.mimeType, summary: .node.summary, keyTopics: .node.keyTopics}'
 ```
 
-### file search
+### search
 
 ```
-gdrivescope file search <QUERY> [flags]
+gdrivescope search <QUERY> [flags]
 ```
 
 | Flag | Args | Purpose |
 |------|------|---------|
 | `--mode` | `name\|semantic` | Search backend (default: auto) |
+| `--type` | `folder\|file\|shortcut\|other` | Filter by node kind |
 | `--scope` | `<FOLDER_ID>` | Restrict to descendants of folder |
 | `--limit` | `<N>` | Max hits (default: 20) |
 | `--threshold` | `<X>` | Min cosine similarity (semantic only) |
 | `--classification` | `<value>` | Filter by classification |
 | `--embedding-provider` | `<name>` | Embedding provider for query |
 
-Search modes: `semantic` (cosine similarity over embeddings), `name` (substring match on file name). Default: auto — semantic if embeddings exist, else name.
+Search modes: `semantic` (cosine similarity over embeddings), `name` (substring match on entry name). Default: auto — semantic if embeddings exist, else name. Only `--type file` entries are embedded; pair `--type folder|shortcut|other` with `--mode name`.
 
 ```bash
 # Semantic search
-gdrivescope --json file search "quarterly revenue" --limit 5 | jq '.data[] | {name, path, score}'
+gdrivescope --json search "quarterly revenue" --limit 5 | jq '.data.hits[] | {name, path, score}'
 
 # Scoped semantic search
-gdrivescope --json file search "budget" --scope FOLDER_ID --threshold 0.7 | jq '.data[] | {name, score}'
+gdrivescope --json search "budget" --scope FOLDER_ID --threshold 0.7 | jq '.data.hits[] | {name, score}'
 
 # Name-based search
-gdrivescope --json file search "report" --mode name | jq '.data[] | {name, path}'
+gdrivescope --json search "report" --mode name | jq '.data.hits[] | {name, path}'
+
+# Find a folder by name
+gdrivescope --json search "Reports" --mode name --type folder | jq '.data.hits[] | {id, name, path}'
 
 # Filter by classification
-gdrivescope --json file search "design" --classification spreadsheet | jq '.data[] | {name, path}'
+gdrivescope --json search "design" --classification financial | jq '.data.hits[] | {name, path}'
 ```
 
-### file download
+### download
 
 ```
-gdrivescope file download <ID> [flags]
+gdrivescope download <ID> [flags]
 ```
 
 | Flag | Args | Purpose |
@@ -187,13 +200,13 @@ Formats: `auto` (export Google Workspace docs via export map), `raw` (binary byt
 
 ```bash
 # Download to current directory
-gdrivescope --json file download FILE_ID | jq '.data | {path, bytes}'
+gdrivescope --json download FILE_ID | jq '.data | {outputPath, bytes}'
 
 # Download to specific path
-gdrivescope --json file download FILE_ID -o ./reports/q4.pdf | jq '.data | {path, bytes}'
+gdrivescope --json download FILE_ID -o ./reports/q4.pdf | jq '.data | {outputPath, bytes}'
 
 # Download raw bytes (skip export conversion)
-gdrivescope --json file download FILE_ID --format raw | jq '.data | {path, bytes}'
+gdrivescope --json download FILE_ID --format raw | jq '.data | {outputPath, bytes}'
 ```
 
 ## Global Flags

@@ -4,14 +4,14 @@ import * as configAddRootCmd from './commands/config-add-root.js';
 import * as configListRootsCmd from './commands/config-list-roots.js';
 import * as configRemoveRootCmd from './commands/config-remove-root.js';
 import * as configShowCmd from './commands/config-show.js';
-import * as fileDownloadCmd from './commands/file-download.js';
-import * as fileListCmd from './commands/file-list.js';
-import * as fileSearchCmd from './commands/file-search.js';
-import * as fileShowCmd from './commands/file-show.js';
+import * as downloadCmd from './commands/download.js';
 import * as indexCmd from './commands/index.js';
+import * as listCmd from './commands/list.js';
 import * as loginCmd from './commands/login.js';
 import * as logoutCmd from './commands/logout.js';
 import * as ollamaSetupCmd from './commands/ollama-setup.js';
+import * as searchCmd from './commands/search.js';
+import * as showCmd from './commands/show.js';
 
 export interface GlobalFlags {
   json: boolean;
@@ -113,33 +113,36 @@ export const registry: Record<string, Record<string, Command>> = {
       ollamaSetupCmd.render
     ),
   },
-  file: {
-    list: wrap<fileListCmd.FileListData, fileListCmd.FileListFlags>(
-      'List files under a folder from the indexed graph',
-      fileListCmd.HELP,
-      fileListCmd.run,
-      fileListCmd.render
+  list: {
+    _: wrap<listCmd.ListData, listCmd.ListFlags>(
+      'List entries under a folder from the indexed graph',
+      listCmd.HELP,
+      listCmd.run,
+      listCmd.render
     ),
-    show: wrap<fileShowCmd.FileShowData, fileShowCmd.FileShowFlags>(
+  },
+  show: {
+    _: wrap<showCmd.ShowData, showCmd.ShowFlags>(
       'Show a single node from the indexed graph',
-      fileShowCmd.HELP,
-      fileShowCmd.run,
-      fileShowCmd.render
+      showCmd.HELP,
+      showCmd.run,
+      showCmd.render
     ),
-    search: wrap<fileSearchCmd.FileSearchData, fileSearchCmd.FileSearchFlags>(
-      'Search the indexed graph by file name',
-      fileSearchCmd.HELP,
-      fileSearchCmd.run,
-      fileSearchCmd.render
+  },
+  search: {
+    _: wrap<searchCmd.SearchData, searchCmd.SearchFlags>(
+      'Search the indexed graph by name or embedding',
+      searchCmd.HELP,
+      searchCmd.run,
+      searchCmd.render
     ),
-    download: wrap<
-      fileDownloadCmd.FileDownloadData,
-      fileDownloadCmd.FileDownloadFlags
-    >(
+  },
+  download: {
+    _: wrap<downloadCmd.DownloadData, downloadCmd.DownloadFlags>(
       'Download a file from Drive',
-      fileDownloadCmd.HELP,
-      fileDownloadCmd.run,
-      fileDownloadCmd.render
+      downloadCmd.HELP,
+      downloadCmd.run,
+      downloadCmd.render
     ),
   },
 };

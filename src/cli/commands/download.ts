@@ -7,27 +7,27 @@ import { success } from '../../models/api-response.js';
 import { getDbPath } from '../../utils/config.js';
 import { CliError, toResponse } from '../../utils/errors.js';
 
-export interface FileDownloadFlags {
+export interface DownloadFlags {
   _positional?: string;
   output?: string;
   o?: string;
   format?: 'auto' | 'raw' | string;
 }
 
-export interface FileDownloadData {
+export interface DownloadData {
   id: string;
   outputPath: string;
   bytes: number;
   mimeType: string;
 }
 
-export const HELP = `gdrivescope file download — Download a file from Drive
+export const HELP = `gdrivescope download — Download a file from Drive
 
 Google Workspace docs are exported to Office formats unless --format raw is
 passed.
 
 Usage:
-  gdrivescope file download <ID> [-o PATH] [--format auto|raw]
+  gdrivescope download <ID> [-o PATH] [--format auto|raw]
 
 Options:
   -o, --output <PATH>   Destination file or directory (default: cwd)
@@ -45,11 +45,11 @@ function resolveFormat(value: string | undefined): 'auto' | 'raw' {
 }
 
 export async function run(
-  flags: FileDownloadFlags
-): Promise<ApiResponse<FileDownloadData>> {
+  flags: DownloadFlags
+): Promise<ApiResponse<DownloadData>> {
   if (!flags._positional) {
     return toResponse(
-      new CliError('Usage: gdrivescope file download <ID>', 'MISSING_ARG')
+      new CliError('Usage: gdrivescope download <ID>', 'MISSING_ARG')
     );
   }
   const positional = flags._positional;
@@ -77,6 +77,6 @@ export async function run(
   }
 }
 
-export function render(data: FileDownloadData): string {
+export function render(data: DownloadData): string {
   return `Downloaded ${data.outputPath} (${data.bytes} bytes, ${data.mimeType})`;
 }

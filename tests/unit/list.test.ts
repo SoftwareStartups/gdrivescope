@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { run } from '../../src/cli/commands/file-list.js';
+import { run } from '../../src/cli/commands/list.js';
 import { nodeInput } from '../helpers/makeStore.js';
 import {
   type TempDbContext,
@@ -9,11 +9,11 @@ import {
 
 const MY_DRIVE_ID = '0A1B2C3D4myDriveRealId';
 
-describe('file list command', () => {
+describe('list command', () => {
   let ctx: TempDbContext;
 
   beforeEach(() => {
-    ctx = useTempDb('filelist');
+    ctx = useTempDb('list');
     seedTempDb(ctx.dbPath, [
       nodeInput({ id: MY_DRIVE_ID, name: 'My Drive', parentId: null }),
       nodeInput({ id: 'docs', name: 'Docs', parentId: MY_DRIVE_ID }),
@@ -52,6 +52,7 @@ describe('file list command', () => {
       'images',
     ]);
     expect(response.data.recursive).toBe(false);
+    expect(response.data.type).toBeNull();
   });
 
   test('`root` sentinel resolves to My Drive root', async () => {
@@ -103,7 +104,7 @@ describe('file list command', () => {
 
   test('empty store returns NODE_NOT_FOUND with index suggestion', async () => {
     ctx.cleanup();
-    ctx = useTempDb('filelist-empty');
+    ctx = useTempDb('list-empty');
     seedTempDb(ctx.dbPath, []);
     const response = await run({});
     expect(response.ok).toBe(false);
@@ -124,7 +125,7 @@ describe('file list command', () => {
 
   test('multiple roots: listing with no positional enumerates the roots', async () => {
     ctx.cleanup();
-    ctx = useTempDb('filelist-multi');
+    ctx = useTempDb('list-multi');
     seedTempDb(ctx.dbPath, [
       nodeInput({ id: 'rootA', name: 'Workspace A', parentId: null }),
       nodeInput({ id: 'rootB', name: 'Workspace B', parentId: null }),
@@ -138,5 +139,65 @@ describe('file list command', () => {
       'rootA',
       'rootB',
     ]);
+  });
+
+  test('--type folder returns only folders', async () => {
+    const response = await run({ recursive: true, type: 'folder' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.type).toBe('folder');
+    expect(response.data.files.map((f) => f.id).sort()).toEqual([
+      'docs',
+      'images',
+    ]);
+  });
+
+  test('--type file excludes folders, shortcuts, and media', async () => {
+    const response = await run({ recursive: true, type: 'file' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.files.map((f) => f.id).sort()).toEqual([
+      'notes',
+      'report',
+    ]);
+  });
+
+  test('--type other returns images / forms / sites / shortcuts excluded', async () => {
+    const response = await run({ recursive: true, type: 'other' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.files.map((f) => f.id)).toEqual(['logo']);
+  });
+
+  test('--type shortcut filters to shortcut nodes', async () => {
+    ctx.cleanup();
+    ctx = useTempDb('list-shortcut');
+    seedTempDb(ctx.dbPath, [
+      nodeInput({ id: MY_DRIVE_ID, name: 'My Drive', parentId: null }),
+      nodeInput({
+        id: 'sc1',
+        name: 'pointer',
+        parentId: MY_DRIVE_ID,
+        mimeType: 'application/vnd.google-apps.shortcut',
+      }),
+      nodeInput({
+        id: 'doc1',
+        name: 'doc',
+        parentId: MY_DRIVE_ID,
+        mimeType: 'application/pdf',
+      }),
+    ]);
+    const response = await run({ recursive: true, type: 'shortcut' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.files.map((f) => f.id)).toEqual(['sc1']);
+  });
+
+  test('invalid --type returns USAGE error envelope', async () => {
+    const response = await run({ type: 'bogus' });
+    expect(response.ok).toBe(false);
+    if (response.ok) return;
+    expect(response.code).toBe('USAGE');
+    expect(response.error).toMatch(/--type/);
   });
 });

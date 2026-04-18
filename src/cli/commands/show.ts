@@ -7,24 +7,24 @@ import { success } from '../../models/api-response.js';
 import { getDbPath } from '../../utils/config.js';
 import { CliError, toResponse } from '../../utils/errors.js';
 
-export interface FileShowFlags {
+export interface ShowFlags {
   _positional?: string;
 }
 
-export type FileShowNode = Omit<Node, 'metadataJson' | 'keyTopics'> & {
+export type ShowNode = Omit<Node, 'metadataJson' | 'keyTopics'> & {
   metadata: unknown;
   keyTopics: string[] | null;
 };
 
-export interface FileShowData {
-  node: FileShowNode;
+export interface ShowData {
+  node: ShowNode;
   path: string;
 }
 
-export const HELP = `gdrivescope file show — Show a single node from the indexed graph
+export const HELP = `gdrivescope show — Show a single node from the indexed graph
 
 Usage:
-  gdrivescope file show <ID> [--json]
+  gdrivescope show <ID> [--json]
 `;
 
 function parseKeyTopics(raw: string | null): string[] | null {
@@ -45,7 +45,7 @@ function parseMetadata(raw: string): unknown {
   }
 }
 
-function toShowNode(row: Node): FileShowNode {
+function toShowNode(row: Node): ShowNode {
   const { metadataJson, keyTopics, ...rest } = row;
   return {
     ...rest,
@@ -54,12 +54,10 @@ function toShowNode(row: Node): FileShowNode {
   };
 }
 
-export async function run(
-  flags: FileShowFlags
-): Promise<ApiResponse<FileShowData>> {
+export async function run(flags: ShowFlags): Promise<ApiResponse<ShowData>> {
   if (!flags._positional) {
     return toResponse(
-      new CliError('Usage: gdrivescope file show <ID>', 'MISSING_ARG')
+      new CliError('Usage: gdrivescope show <ID>', 'MISSING_ARG')
     );
   }
   const positional = flags._positional;
@@ -77,7 +75,7 @@ export async function run(
   }
 }
 
-export function render(data: FileShowData): string {
+export function render(data: ShowData): string {
   const lines = [
     data.node.name,
     `  id:      ${data.node.id}`,

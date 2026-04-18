@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { run } from '../../src/cli/commands/file-show.js';
+import { run } from '../../src/cli/commands/show.js';
 import { nodeInput } from '../helpers/makeStore.js';
 import {
   type TempDbContext,
@@ -7,11 +7,11 @@ import {
   useTempDb,
 } from '../helpers/tempDb.js';
 
-describe('file show command', () => {
+describe('show command', () => {
   let ctx: TempDbContext;
 
   beforeEach(() => {
-    ctx = useTempDb('fileshow');
+    ctx = useTempDb('show');
     seedTempDb(ctx.dbPath, [
       nodeInput({ id: 'root', name: 'My Drive', parentId: null }),
       nodeInput({

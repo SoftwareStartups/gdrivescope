@@ -34,21 +34,24 @@ gdrivescope login
 gdrivescope --json index --scope FOLDER_ID
 
 # 2. Semantic search within that scope
-gdrivescope --json file search "quarterly revenue" --scope FOLDER_ID --limit 5 \
+gdrivescope --json search "quarterly revenue" --scope FOLDER_ID --limit 5 \
   | jq '.data[] | {id, name, path, score}'
 
 # 3. Show a single hit in detail
-gdrivescope --json file show FILE_ID | jq '.data | {name, path, summary, key_topics}'
+gdrivescope --json show FILE_ID | jq '.data | {name, path, summary, key_topics}'
 ```
 
 ## Common Patterns
 
 ```bash
 # List a folder tree
-gdrivescope --json file list FOLDER_ID -r | jq '.data[] | {id, name, mime_type}'
+gdrivescope --json list FOLDER_ID -r | jq '.data.files[] | {id, name, mimeType}'
+
+# List only folders (or only files / shortcuts / other)
+gdrivescope --json list FOLDER_ID -r --type folder | jq '.data.files[] | {id, name}'
 
 # Download a file to disk
-gdrivescope --json file download FILE_ID -o ./report.pdf | jq '.data | {path, bytes}'
+gdrivescope --json download FILE_ID -o ./report.pdf | jq '.data | {outputPath, bytes}'
 
 # Metadata-only index (fast, no LLM cost)
 gdrivescope --json index --scope FOLDER_ID --metadata-only | jq '.data'
@@ -60,7 +63,7 @@ gdrivescope --json index --scope FOLDER_ID --resume | jq '.data'
 gdrivescope --json index --scope FOLDER_ID --prune | jq '.data'
 
 # Name-based search (no embeddings needed)
-gdrivescope --json file search "budget" --mode name --limit 10 | jq '.data[] | {name, path}'
+gdrivescope --json search "budget" --mode name --limit 10 | jq '.data.hits[] | {name, path}'
 
 # Show workspace config
 gdrivescope --json config show | jq '.data'

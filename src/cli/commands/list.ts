@@ -7,6 +7,12 @@ import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
 import { getDbPath } from '../../utils/config.js';
 import { CliError, toResponse } from '../../utils/errors.js';
+import {
+  classifyNodeType,
+  isNodeType,
+  NODE_TYPES,
+  type NodeType,
+} from '../../utils/node-type.js';
 import { parsePositiveInt } from '../../utils/parse.js';
 
 const ROOT_SENTINELS = new Set(['root', 'my-drive']);
@@ -18,14 +24,15 @@ function findRootNodeIds(graph: DriveGraph): string[] {
     .filter((id) => graph.getNodeAttributes(id).parentId === null);
 }
 
-export interface FileListFlags {
+export interface ListFlags {
   _positional?: string;
   recursive?: boolean;
   r?: boolean;
   limit?: string;
+  type?: string;
 }
 
-export interface FileListEntry {
+export interface ListEntry {
   id: string;
   name: string;
   mimeType: string;
@@ -33,16 +40,17 @@ export interface FileListEntry {
   path: string;
 }
 
-export interface FileListData {
+export interface ListData {
   startId: string;
   recursive: boolean;
-  files: FileListEntry[];
+  type: NodeType | null;
+  files: ListEntry[];
 }
 
-export const HELP = `gdrivescope file list — List files under a folder from the indexed graph
+export const HELP = `gdrivescope list — List entries under a folder from the indexed graph
 
 Usage:
-  gdrivescope file list [FOLDER_ID|NAME] [options]
+  gdrivescope list [FOLDER_ID|NAME] [options]
 
 Arguments:
   FOLDER_ID|NAME     Starting folder — Drive id, configured folder alias,
@@ -52,17 +60,35 @@ Arguments:
 
 Options:
   -r, --recursive    Recurse into subfolders
+  --type <KIND>      Filter by node kind: ${NODE_TYPES.join(' | ')}
+                     - folder:   Drive folders
+                     - file:     extractable content (Docs, PDFs, Office, …)
+                     - shortcut: Drive shortcuts
+                     - other:    forms / sites / images / audio / video
   --limit <N>        Maximum rows to emit (default 200)
   --json             Emit JSON envelope instead of human-readable output
 `;
 
+function parseTypeFilter(value: string | undefined): NodeType | null {
+  if (value === undefined) return null;
+  if (!isNodeType(value)) {
+    throw new CliError(
+      `invalid --type value: ${value} (expected ${NODE_TYPES.join('|')})`,
+      'USAGE'
+    );
+  }
+  return value;
+}
+
 function buildEntries(
   graph: DriveGraph,
   ids: readonly string[],
-  limit: number
-): FileListEntry[] {
+  limit: number,
+  type: NodeType | null
+): ListEntry[] {
   return ids
     .map((id) => graph.getNodeAttributes(id))
+    .filter((n) => (type ? classifyNodeType(n.mimeType) === type : true))
     .map((n) => ({
       id: n.id,
       name: n.name,
@@ -74,10 +100,9 @@ function buildEntries(
     .slice(0, limit);
 }
 
-export async function run(
-  flags: FileListFlags
-): Promise<ApiResponse<FileListData>> {
+export async function run(flags: ListFlags): Promise<ApiResponse<ListData>> {
   try {
+    const type = parseTypeFilter(flags.type);
     const cfg = await loadWorkspaceConfig();
     return await withStoreAsync(getDbPath(), async (store) => {
       const graph = hydrateGraph(store);
@@ -103,7 +128,8 @@ export async function run(
           return success({
             startId,
             recursive,
-            files: buildEntries(graph, ids, limit),
+            type,
+            files: buildEntries(graph, ids, limit, type),
           });
         }
         // Multiple roots: synthesize a listing of the roots themselves.
@@ -113,7 +139,8 @@ export async function run(
         return success({
           startId: WORKSPACE_MARKER,
           recursive,
-          files: buildEntries(graph, ids, limit),
+          type,
+          files: buildEntries(graph, ids, limit, type),
         });
       }
 
@@ -130,7 +157,8 @@ export async function run(
       return success({
         startId: resolved,
         recursive,
-        files: buildEntries(graph, ids, limit),
+        type,
+        files: buildEntries(graph, ids, limit, type),
       });
     });
   } catch (err) {
@@ -148,11 +176,13 @@ function formatSize(size: number | null): string {
   return `${(mb / 1024).toFixed(1)}G`;
 }
 
-export function render(data: FileListData): string {
+export function render(data: ListData): string {
+  const filterSuffix = data.type ? ` [${data.type}]` : '';
   if (data.files.length === 0) {
-    return `No files under ${data.startId}.`;
+    return `No entries under ${data.startId}${filterSuffix}.`;
   }
-  const header = `${data.files.length} file(s) under ${data.startId}${data.recursive ? ' (recursive)' : ''}:`;
+  const recursiveSuffix = data.recursive ? ' (recursive)' : '';
+  const header = `${data.files.length} entry/entries under ${data.startId}${recursiveSuffix}${filterSuffix}:`;
   const rows = data.files.map(
     (f) => `  ${formatSize(f.size).padStart(7)}  ${f.path}`
   );

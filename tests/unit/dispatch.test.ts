@@ -70,14 +70,6 @@ describe('main dispatcher', () => {
     expect(parsed.error).toContain('bogus');
   });
 
-  test('unknown subcommand returns code 2', async () => {
-    const code = await main(['--json', 'login', 'weird']);
-    expect(code).toBe(2);
-    const parsed = JSON.parse(stdoutCalls.join('').trim());
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe('UNKNOWN_COMMAND');
-  });
-
   test('unknown command in human mode writes to stderr and sets exit code', async () => {
     await main(['bogus']);
     expect(stderrCalls.join('')).toContain('UNKNOWN_COMMAND');
@@ -99,6 +91,51 @@ describe('main dispatcher', () => {
     const out = stdoutCalls.join('');
     expect(out).toContain('gdrivescope logout');
     expect(stderrCalls.join('')).toBe('');
+  });
+
+  test.each([
+    'list',
+    'show',
+    'search',
+    'download',
+  ])('%s --help prints per-command help at top level', async (verb) => {
+    const code = await main([verb, '--help']);
+    expect(code).toBe(0);
+    const out = stdoutCalls.join('');
+    expect(out).toContain(`gdrivescope ${verb}`);
+    expect(stderrCalls.join('')).toBe('');
+  });
+
+  test('legacy `file list` form returns UNKNOWN_COMMAND', async () => {
+    const code = await main(['--json', 'file', 'list']);
+    expect(code).toBe(2);
+    const parsed = JSON.parse(stdoutCalls.join('').trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe('UNKNOWN_COMMAND');
+  });
+
+  test('top-level `search QUERY` treats positional as arg, not sub-verb', async () => {
+    // Without an indexed DB the command will fail downstream, but it must
+    // first dispatch to the `_` verb of `search` instead of bailing with
+    // "Unknown subcommand: search QUERY". We assert the error code is *not*
+    // UNKNOWN_COMMAND — anything else (NODE_NOT_FOUND, UNKNOWN, etc.) means
+    // dispatch reached the command's run().
+    const code = await main(['--json', 'search', 'Skyfora', '--mode', 'name']);
+    const parsed = JSON.parse(stdoutCalls.join('').trim());
+    if (parsed.ok === false) {
+      expect(parsed.code).not.toBe('UNKNOWN_COMMAND');
+    } else {
+      expect(code).toBe(0);
+    }
+  });
+
+  test('config with unknown sub-verb still returns UNKNOWN_COMMAND', async () => {
+    const code = await main(['--json', 'config', 'bogus']);
+    expect(code).toBe(2);
+    const parsed = JSON.parse(stdoutCalls.join('').trim());
+    expect(parsed.ok).toBe(false);
+    expect(parsed.code).toBe('UNKNOWN_COMMAND');
+    expect(parsed.error).toContain('config bogus');
   });
 
   test('login --help --json emits help envelope', async () => {

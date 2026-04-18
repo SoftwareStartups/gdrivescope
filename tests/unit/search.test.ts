@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { run } from '../../src/cli/commands/file-search.js';
+import { run } from '../../src/cli/commands/search.js';
 import { openStore } from '../../src/graph/store.js';
 import { FakeEmbeddingProvider } from '../helpers/fakeEmbedding.js';
 import { nodeInput } from '../helpers/makeStore.js';
@@ -9,11 +9,11 @@ import {
   useTempDb,
 } from '../helpers/tempDb.js';
 
-describe('file search command', () => {
+describe('search command', () => {
   let ctx: TempDbContext;
 
   beforeEach(() => {
-    ctx = useTempDb('filesearch');
+    ctx = useTempDb('search');
     seedTempDb(ctx.dbPath, [
       nodeInput({ id: 'root', name: 'My Drive', parentId: null }),
       nodeInput({ id: 'docs', name: 'Docs', parentId: 'root' }),
@@ -137,5 +137,29 @@ describe('file search command', () => {
     if (!response.ok) return;
     expect(response.data.hits).toHaveLength(1);
     expect(response.data.hits[0]?.id).toBe('r1');
+  });
+
+  test('--type file (name mode) excludes folders', async () => {
+    const response = await run({ _positional: 'report', type: 'file' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.type).toBe('file');
+    expect(
+      response.data.hits.every((h) => h.mimeType === 'application/pdf')
+    ).toBe(true);
+  });
+
+  test('--type folder (name mode) keeps only folder hits', async () => {
+    const response = await run({ _positional: 'docs', type: 'folder' });
+    expect(response.ok).toBe(true);
+    if (!response.ok) return;
+    expect(response.data.hits.map((h) => h.id)).toEqual(['docs']);
+  });
+
+  test('invalid --type returns USAGE error envelope', async () => {
+    const response = await run({ _positional: 'report', type: 'bogus' });
+    expect(response.ok).toBe(false);
+    if (response.ok) return;
+    expect(response.code).toBe('USAGE');
   });
 });

@@ -118,7 +118,7 @@ No API keys (Anthropic, OpenAI, etc.) are needed for login.
 
 ```bash
 gdrivescope index --scope <FOLDER_ID> --metadata-only
-gdrivescope file list <FOLDER_ID> -r
+gdrivescope list <FOLDER_ID> -r
 ```
 
 `--metadata-only` traverses the Drive folder tree and populates the local graph without downloading files, calling LLMs, or generating embeddings. It is free, fast, and safe — use it to see what is in a folder before committing to a full index run.
@@ -160,7 +160,7 @@ gdrivescope index --scope <FOLDER_ID>
 ### Step 5: Search
 
 ```bash
-gdrivescope file search "board meeting Q3"
+gdrivescope search "board meeting Q3"
 ```
 
 ## Root folders
@@ -206,10 +206,10 @@ label = "Team Drive"
 | `config list-roots` | List configured root folders |
 | `config add-root` | Persist a Drive folder as a root |
 | `config remove-root` | Remove a configured root |
-| `file list [FOLDER_ID]` | Tree listing from the local graph |
-| `file show <ID>` | Node details (path, metadata, summary, topics) |
-| `file search <QUERY>` | Semantic + filter search via sqlite-vec |
-| `file download <ID>` | Raw bytes to disk |
+| `list [FOLDER_ID]` | Tree listing from the local graph (`--type folder\|file\|shortcut\|other` to filter) |
+| `show <ID>` | Node details (path, metadata, summary, topics) |
+| `search <QUERY>` | Semantic + filter search via sqlite-vec (`--type` filter supported) |
+| `download <ID>` | Raw bytes to disk |
 
 ## Index flags
 
@@ -248,7 +248,7 @@ The `--metadata-only` flag skips all downloads, extraction, LLM calls, and embed
 gdrivescope index --scope <FOLDER_ID> --metadata-only
 
 # Then browse what's there
-gdrivescope file list <FOLDER_ID> -r
+gdrivescope list <FOLDER_ID> -r
 
 # When ready, full-index with summarization + embeddings
 gdrivescope index --scope <FOLDER_ID>
