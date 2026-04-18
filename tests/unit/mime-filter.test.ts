@@ -9,6 +9,7 @@ describe('shouldExtract', () => {
     'application/vnd.google-apps.map',
     'application/vnd.google-apps.jam',
     'application/vnd.google-apps.shortcut',
+    'application/octet-stream',
   ])('skips %s', (mime) => {
     expect(SKIPPED_MIMES.has(mime)).toBe(true);
     expect(shouldExtract(mime)).toBe(false);

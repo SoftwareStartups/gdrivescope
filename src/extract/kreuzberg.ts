@@ -1,5 +1,8 @@
 import { extractBytes, initWasm } from '@kreuzberg/wasm';
 import { CliError } from '../utils/errors.js';
+// Side-effect: installs console.warn/console.error filters for Kreuzberg's
+// lopdf warnings and panic-hook spam before the first extractBytes() call.
+import './wasm-console-filter.js';
 
 let initPromise: Promise<void> | null = null;
 function ensureInit(): Promise<void> {

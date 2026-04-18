@@ -5,6 +5,10 @@ export const SKIPPED_MIMES: ReadonlySet<string> = new Set([
   'application/vnd.google-apps.map',
   'application/vnd.google-apps.jam',
   'application/vnd.google-apps.shortcut',
+  // Drive's fallback when it can't classify a file. Kreuzberg needs a
+  // concrete MIME type to pick a parser; octet-stream always errors with
+  // "Could not determine MIME type from bytes".
+  'application/octet-stream',
 ]);
 
 export function shouldExtract(mime: string): boolean {

@@ -5,6 +5,7 @@ import { registry } from './cli/registry.js';
 import { emit, setJsonMode } from './formatters/output.js';
 import { fail, success } from './models/api-response.js';
 import { toResponse } from './utils/errors.js';
+import { installProcessHandlers } from './utils/process-handlers.js';
 
 const HELP = `gdrivescope — Google Drive indexing, search, and download CLI
 
@@ -144,5 +145,6 @@ function exitCodeOrZero(): number {
 }
 
 if (import.meta.main) {
+  installProcessHandlers();
   process.exit(await main(Bun.argv.slice(2)));
 }

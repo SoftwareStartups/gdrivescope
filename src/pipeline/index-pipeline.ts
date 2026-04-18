@@ -328,10 +328,15 @@ function recordNodeFailure(store: Store, node: Node, err: unknown): void {
   if (info) {
     store.recordError(node.id, formatPermanentError(info, rawMessage));
     warn(
-      `index: skipped ${node.name} (${node.id}): ${humanizePermanentReason(info.reason)}`
+      `index: skipped ${describeNode(node)}: ${humanizePermanentReason(info.reason)}`
     );
     return;
   }
   store.recordError(node.id, rawMessage);
-  warn(`index: node ${node.id} failed: ${rawMessage}`);
+  warn(`index: ${describeNode(node)} failed: ${rawMessage}`);
+}
+
+function describeNode(node: Node): string {
+  const size = typeof node.size === 'number' ? `, ${node.size}B` : '';
+  return `"${node.name}" (${node.id}, ${node.mimeType}${size})`;
 }
