@@ -1,4 +1,9 @@
 import {
+  ensureScope,
+  SCOPE_METADATA_READONLY,
+  SCOPE_READONLY,
+} from '../../auth/scopes.js';
+import {
   type ConfigRoot,
   loadWorkspaceConfig,
   resolveFolder,
@@ -173,6 +178,8 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
   const dbPath = getDbPath();
   const store = openStore(dbPath);
   try {
+    const metadataOnly = flags['metadata-only'] === true;
+    await ensureScope(metadataOnly ? SCOPE_METADATA_READONLY : SCOPE_READONLY);
     const cfg = await loadWorkspaceConfig();
     const client = await createDriveClient();
     const driveConcurrency =
@@ -184,7 +191,6 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
       'concurrency-llm',
       flags['concurrency-llm']
     );
-    const metadataOnly = flags['metadata-only'] === true;
     const maxSizeBytes = resolveMaxSize(
       flags['max-size'],
       cfg.extraction?.maxSizeBytes

@@ -4,6 +4,12 @@ import { join } from 'node:path';
 import type { drive_v3 } from '@googleapis/drive';
 import { downloadToFile, TEXT_EXPORT_MIME_MAP } from '../drive/download.js';
 import {
+  classifyDriveError,
+  formatPermanentError,
+  humanizePermanentReason,
+  isPermanentErrorMessage,
+} from '../drive/permanent-errors.js';
+import {
   type TraverseResult,
   traverseDriveFolder,
 } from '../drive/traversal.js';
@@ -199,7 +205,13 @@ function buildWorkList(
       skipped += 1;
       continue;
     }
-    if (resume && node.summary != null && node.lastError == null) continue;
+    if (
+      resume &&
+      ((node.summary != null && node.lastError == null) ||
+        isPermanentErrorMessage(node.lastError))
+    ) {
+      continue;
+    }
     work.push(node);
   }
   return { work, skipped };
@@ -276,9 +288,7 @@ async function processOne(p: ProcessOneParams): Promise<void> {
     }
   } catch (err) {
     stats.errors += 1;
-    const message = err instanceof Error ? err.message : String(err);
-    opts.store.recordError(node.id, message);
-    warn(`index: node ${node.id} failed: ${message}`);
+    recordNodeFailure(opts.store, node, err);
     return;
   } finally {
     releaseDrive();
@@ -306,10 +316,22 @@ async function processOne(p: ProcessOneParams): Promise<void> {
     stats.summarized += 1;
   } catch (err) {
     stats.errors += 1;
-    const message = err instanceof Error ? err.message : String(err);
-    opts.store.recordError(node.id, message);
-    warn(`index: node ${node.id} failed: ${message}`);
+    recordNodeFailure(opts.store, node, err);
   } finally {
     releaseLlm();
   }
+}
+
+function recordNodeFailure(store: Store, node: Node, err: unknown): void {
+  const rawMessage = err instanceof Error ? err.message : String(err);
+  const info = classifyDriveError(err);
+  if (info) {
+    store.recordError(node.id, formatPermanentError(info, rawMessage));
+    warn(
+      `index: skipped ${node.name} (${node.id}): ${humanizePermanentReason(info.reason)}`
+    );
+    return;
+  }
+  store.recordError(node.id, rawMessage);
+  warn(`index: node ${node.id} failed: ${rawMessage}`);
 }

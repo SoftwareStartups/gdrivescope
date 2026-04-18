@@ -50,9 +50,20 @@ export GDRIVESCOPE_SQLITE_LIB=/path/to/libsqlite3.so
 
 ### Google OAuth credentials
 
-Create a **Desktop** OAuth client at [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials). Enable the **Google Drive API** for your project and add the `drive.readonly` scope.
+Create a **Desktop** OAuth client at [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials) and enable the **Google Drive API** for your project. You will need the client id and secret for `gdrivescope login`.
 
-You will need the client id and secret for `gdrivescope login`.
+#### OAuth consent screen scopes
+
+gdrivescope uses two Drive scopes depending on what you ask it to do:
+
+| Scope | What it allows | Commands that need it |
+|-------|----------------|-----------------------|
+| `https://www.googleapis.com/auth/drive.metadata.readonly` | List folders, read file metadata (name, size, mime, path, ancestry) | `list`, `tree`, `config *`, `index --metadata-only` |
+| `https://www.googleapis.com/auth/drive.readonly` | Above + download file content and export Google Workspace docs | `index` (default), `download`, `show`, `search` |
+
+In Cloud Console → **APIs & Services → OAuth consent screen → Scopes**, add both scopes. `drive.readonly` is the one required for content indexing; without it, `files.get?alt=media` and `files.export` return HTTP 403 `appNotAuthorizedToFile` for every file.
+
+If your OAuth app is in **Testing** mode, also add yourself (and any other accounts you plan to use) as a Test user. For production use, Google requires verification for sensitive scopes like `drive.readonly`.
 
 ## Installation
 
@@ -100,8 +111,14 @@ task compile
 ### Step 1: Log in
 
 ```bash
+# Exploration only (list, tree, index --metadata-only)
 gdrivescope login
+
+# Full indexing (downloads + summarization + embeddings)
+gdrivescope login --scope drive.readonly
 ```
+
+The default `gdrivescope login` requests only the `drive.metadata.readonly` scope, which is enough to list folders and read file metadata. To download file content — required by `index` without `--metadata-only`, `download`, `show`, and any search that renders content — re-run with `--scope drive.readonly`. Running `index` against a metadata-only session fails fast with a `SCOPE_REQUIRED` error.
 
 The login command resolves your Google OAuth client id and secret through a cascade:
 
@@ -391,6 +408,13 @@ Manage roots via `gdrivescope config add-root` / `config remove-root`.
 **SQLite extension error** — If you see `Failed to load sqlite-vec extension`, install a system SQLite library with extension support for your platform (see [Prerequisites](#sqlite-with-extension-support)) or set `GDRIVESCOPE_SQLITE_LIB` to a capable libsqlite path.
 
 **Auth errors** — Run `gdrivescope logout` then `gdrivescope login` to re-authorize. Ensure your Google OAuth client has the `drive.readonly` scope enabled in the Google Cloud console.
+
+**`SCOPE_REQUIRED` on `index`** — Your current session was authorized with `drive.metadata.readonly`, which cannot download file content. Re-authorize with `gdrivescope login --scope drive.readonly`, or pass `--metadata-only` to `index` if you only need the folder/file metadata graph.
+
+**`appNotAuthorizedToFile` 403 during `index`** — The OAuth app cannot read a specific file's content. Two causes:
+
+1. **You logged in with the default `drive.metadata.readonly` scope.** Re-run `gdrivescope login --scope drive.readonly`. Newer builds fail fast with `SCOPE_REQUIRED` before this can happen; older builds surface it per file.
+2. **The file is genuinely blocked to third-party apps.** The file was shared from an external Google Workspace tenant whose admin restricts third-party OAuth apps, or shared via "anyone with the link" instead of to your account. No scope change can fix this — ask the owner to re-share the file directly to your account, or copy it into a Shared Drive you can access. gdrivescope records these failures with a `[permanent:…]` marker in `last_error`, and `--resume` skips them on subsequent runs so they don't keep burning API quota.
 
 **Kreuzberg extraction failures** — Kreuzberg uses NAPI bindings for PDF/Office extraction. If they fail at runtime (e.g. on a musl-based Linux or inside a stripped container), the tool falls back to `@kreuzberg/wasm`. If both fail, the file is skipped with an error recorded in `last_error`.
 
