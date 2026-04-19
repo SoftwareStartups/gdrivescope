@@ -25,4 +25,16 @@ describe('extractToMarkdown', () => {
       expect((err as CliError).code).toBe('EXTRACT_FAILED');
     }
   });
+
+  test('parallel calls all succeed without wasm panic', async () => {
+    const bytes = await Bun.file(FIXTURE_PATH).bytes();
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        extractToMarkdown(bytes, 'application/pdf')
+      )
+    );
+    for (const md of results) {
+      expect(md).toContain('gdrivescope');
+    }
+  });
 });

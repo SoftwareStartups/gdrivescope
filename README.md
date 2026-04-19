@@ -329,6 +329,47 @@ llm_deployment = "gpt-4"
 embedding_deployment = "text-embedding-3-small"
 ```
 
+### Ollama (local)
+
+For fully local indexing with no API keys:
+
+```bash
+# 1. Install + start Ollama
+brew install ollama
+brew services start ollama     # or: ollama serve &
+
+# 2. Pull the models you'll use (one-time)
+ollama pull llama3.2:3b        # LLM — default for GDRIVESCOPE_OLLAMA_MODEL
+ollama pull nomic-embed-text   # embeddings
+
+# 3. Run the index
+gdrivescope index --scope <FOLDER_ID> --provider ollama --embedding-provider ollama
+```
+
+**Keep the model resident.** Ollama unloads models after `keep_alive` expires (default 5 minutes). If a cold load happens between every summarize call, indexing appears to hang — each PDF waits several seconds for the model to reload. Options:
+
+```bash
+# Pin the model in RAM for the whole session (recommended for long index runs)
+OLLAMA_KEEP_ALIVE=-1 ollama serve
+
+# Or warm it once before starting the index so it stays loaded under the
+# default 5-minute window (extended by each gdrivescope call)
+ollama run llama3.2:3b "" >/dev/null
+```
+
+Check what's loaded with `ollama ps` — if the list is empty during a run, the model is cold-loading per request.
+
+Override host or model via env vars:
+
+```bash
+export GDRIVESCOPE_OLLAMA_HOST="http://localhost:11434"
+export GDRIVESCOPE_OLLAMA_MODEL="llama3.2:3b"
+export GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL="nomic-embed-text"
+export GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS="768"   # must match the embedding model
+```
+
+If you change the embedding model later, the vector dimensions change — pass `--rebuild-embeddings` on the next index run.
+
 ### Switching embedding providers
 
 If you switch embedding providers (e.g. from OpenAI to Voyage), the vector dimensions change. Pass `--rebuild-embeddings` on the next full index run to drop and recreate the vector table.
@@ -369,6 +410,10 @@ If you switch embedding providers (e.g. from OpenAI to Voyage), the vector dimen
 |---|---|
 | `GDRIVESCOPE_LLM_PROVIDER` | Default LLM provider (`anthropic`, `openai`, `azure-openai`, `ollama`) |
 | `GDRIVESCOPE_EMBEDDING_PROVIDER` | Default embedding provider (`openai`, `azure-openai`, `voyage`, `ollama`) |
+| `GDRIVESCOPE_OLLAMA_HOST` | Ollama base URL (default `http://localhost:11434`) |
+| `GDRIVESCOPE_OLLAMA_MODEL` | Ollama chat model (default `llama3.2:3b`) |
+| `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL` | Ollama embedding model |
+| `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS` | Ollama embedding vector size (must match the model) |
 | `GDRIVESCOPE_SQLITE_LIB` | Custom path to a SQLite library with extension support |
 | `GDRIVESCOPE_MAX_SIZE` | Default `--max-size` value (bytes) |
 | `GDRIVESCOPE_MAX_PDF_PAGES` | Default `--max-pdf-pages` value |
