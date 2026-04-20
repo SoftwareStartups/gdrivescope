@@ -85,7 +85,7 @@ in `compile:all` are unaffected.
 src/
   index.ts       CLI entry: parseArgs + noun-verb dispatch
   auth/          OAuth 2.0 + PKCE loopback, keychain vault, credential resolution
-  cli/           Noun-verb command registry + 11 command implementations
+  cli/           Noun-verb command registry + per-command implementations
   config/        TOML workspace config (~/.config/gdrivescope/config.toml)
   drive/         Google Drive API client, BFS traversal, download/exports, ancestry
   extract/       Kreuzberg markdown extraction, MIME filtering, PDF slicing
@@ -100,6 +100,7 @@ tests/
   unit/          Pure logic tests
   integration/   Cross-module tests with fake providers
   helpers/       Shared test factories and fakes
+  (e2e/ planned — compiled binary against recorded Drive fixtures)
 ```
 
 ## Conventions
@@ -116,7 +117,7 @@ tests/
 
 ## Testing
 
-Three tiers: `tests/unit`, `tests/integration`, `tests/e2e`. See `tests/CLAUDE.md` for helpers and mocking patterns.
+Two active tiers: `tests/unit`, `tests/integration` (plus a planned `tests/e2e` tier against recorded Drive fixtures). See `tests/CLAUDE.md` for helpers and mocking patterns.
 
 ## See also
 

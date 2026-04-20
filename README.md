@@ -58,7 +58,7 @@ gdrivescope uses two Drive scopes depending on what you ask it to do:
 
 | Scope | What it allows | Commands that need it |
 |-------|----------------|-----------------------|
-| `https://www.googleapis.com/auth/drive.metadata.readonly` | List folders, read file metadata (name, size, mime, path, ancestry) | `list`, `tree`, `config *`, `index --metadata-only` |
+| `https://www.googleapis.com/auth/drive.metadata.readonly` | List folders, read file metadata (name, size, mime, path, ancestry) | `list`, `config *`, `index --metadata-only` |
 | `https://www.googleapis.com/auth/drive.readonly` | Everything `drive.metadata.readonly` grants, plus download file content and export Google Workspace docs | `index` (default), `download`, `show`, `search` — and any metadata-only command above |
 
 `drive.readonly` is a superset of `drive.metadata.readonly`: a session authorized with `drive.readonly` can run every command, including `--metadata-only` flows, without re-logging in.
@@ -113,7 +113,7 @@ task compile
 ### Step 1: Log in
 
 ```bash
-# Exploration only (list, tree, index --metadata-only)
+# Exploration only (list, index --metadata-only)
 gdrivescope login
 
 # Full indexing (downloads + summarization + embeddings)
@@ -229,6 +229,7 @@ label = "Team Drive"
 | `show <ID>` | Node details (path, metadata, summary, topics) |
 | `search <QUERY>` | Semantic + filter search via sqlite-vec (`--type` filter supported) |
 | `download <ID>` | Raw bytes to disk |
+| `ollama setup` | Configure local Ollama (pull models, validate endpoints, write config) |
 
 ## Index flags
 
@@ -240,7 +241,7 @@ label = "Team Drive"
 --resume                     Only process files without a summary or with errors
 --prune                      Delete rows for files no longer visible in Drive
 --concurrency-drive <N>      Max parallel Drive API calls (default 15)
---concurrency-llm <N>        Max parallel LLM/embedding API calls (default 4)
+--concurrency-llm <N>        Max parallel LLM/embedding API calls (default 4; 1 for ollama)
 --concurrency <N>            Shorthand for --concurrency-drive
 --provider <NAME>            LLM provider: anthropic | openai | azure-openai | ollama
 --embedding-provider <NAME>  Embedding provider: openai | azure-openai | voyage | ollama
@@ -254,9 +255,9 @@ label = "Team Drive"
 The index command uses two independent semaphores:
 
 - **`--concurrency-drive`** (default 15) controls parallel Google Drive API calls — metadata listing, file downloads, and Workspace exports.
-- **`--concurrency-llm`** (default 4) controls parallel LLM summarization and embedding calls.
+- **`--concurrency-llm`** (default 4; `1` when the LLM provider is `ollama`) controls parallel LLM summarization and embedding calls.
 
-Both run concurrently: you can have 15 Drive downloads in flight while 4 LLM calls are being processed. The Drive default is higher because those calls are cheap and fast; the LLM default is lower to stay within typical API rate limits. `--concurrency` is shorthand for `--concurrency-drive`.
+Both run concurrently: you can have 15 Drive downloads in flight while 4 LLM calls are being processed. The Drive default is higher because those calls are cheap and fast; the LLM default is lower to stay within typical API rate limits. Local Ollama serializes inference per model, so the LLM default drops to 1 — passing `--concurrency-llm N` with `N>1` against Ollama still works but emits an info line because it mostly adds queueing latency. `--concurrency` is shorthand for `--concurrency-drive`.
 
 ### Start with `--metadata-only`
 
@@ -404,16 +405,35 @@ If you switch embedding providers (e.g. from OpenAI to Voyage), the vector dimen
 | `AZURE_OPENAI_LLM_DEPLOYMENT` | Azure deployment name for LLM |
 | `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Azure deployment name for embeddings |
 
-### Defaults and overrides
+### Provider defaults
 
 | Variable | Purpose |
 |---|---|
 | `GDRIVESCOPE_LLM_PROVIDER` | Default LLM provider (`anthropic`, `openai`, `azure-openai`, `ollama`) |
 | `GDRIVESCOPE_EMBEDDING_PROVIDER` | Default embedding provider (`openai`, `azure-openai`, `voyage`, `ollama`) |
+
+### Provider model overrides
+
+| Variable | Purpose |
+|---|---|
+| `GDRIVESCOPE_ANTHROPIC_MODEL` | Anthropic LLM model override (default `claude-sonnet-4-6`) |
+| `GDRIVESCOPE_OPENAI_MODEL` | OpenAI LLM model override (default `gpt-5.4-nano`) |
+| `GDRIVESCOPE_AZURE_OPENAI_MODEL` | Azure OpenAI LLM model override (default `gpt-5.4-nano`) |
+| `GDRIVESCOPE_OPENAI_EMBEDDING_MODEL` | OpenAI embedding model override (default `text-embedding-3-small`) |
+| `GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS` | OpenAI embedding vector size (default 1536; 3072 for `-large`) |
+| `GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_MODEL` | Azure OpenAI embedding model override (default `text-embedding-3-small`) |
+| `GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS` | Azure OpenAI embedding vector size (default 1536) |
+| `GDRIVESCOPE_VOYAGE_EMBEDDING_MODEL` | Voyage embedding model override (default `voyage-3-lite`) |
+| `GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS` | Voyage embedding vector size (default 512 for `voyage-3-lite`; 1024 for `voyage-3`) |
 | `GDRIVESCOPE_OLLAMA_HOST` | Ollama base URL (default `http://localhost:11434`) |
 | `GDRIVESCOPE_OLLAMA_MODEL` | Ollama chat model (default `llama3.2:3b`) |
-| `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL` | Ollama embedding model |
-| `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS` | Ollama embedding vector size (must match the model) |
+| `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL` | Ollama embedding model (default `nomic-embed-text`) |
+| `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS` | Ollama embedding vector size (must match the model; default 768) |
+
+### Paths and limits
+
+| Variable | Purpose |
+|---|---|
 | `GDRIVESCOPE_SQLITE_LIB` | Custom path to a SQLite library with extension support |
 | `GDRIVESCOPE_MAX_SIZE` | Default `--max-size` value (bytes) |
 | `GDRIVESCOPE_MAX_PDF_PAGES` | Default `--max-pdf-pages` value |

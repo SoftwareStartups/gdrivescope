@@ -35,10 +35,11 @@ gdrivescope --json index --scope FOLDER_ID
 
 # 2. Semantic search within that scope
 gdrivescope --json search "quarterly revenue" --scope FOLDER_ID --limit 5 \
-  | jq '.data[] | {id, name, path, score}'
+  | jq '.data.hits[] | {id, name, path, score}'
 
 # 3. Show a single hit in detail
-gdrivescope --json show FILE_ID | jq '.data | {name, path, summary, key_topics}'
+gdrivescope --json show FILE_ID \
+  | jq '.data | {name: .node.name, path, summary: .node.summary, keyTopics: .node.keyTopics}'
 ```
 
 ## Common Patterns
@@ -76,6 +77,9 @@ gdrivescope --json config list-roots | jq '.data[] | {id, label, node_count}'
 
 # Rebuild embeddings with a different provider
 gdrivescope --json index --scope FOLDER_ID --embedding-provider voyage --rebuild-embeddings | jq '.data'
+
+# Configure local Ollama (pulls models, writes config.toml)
+gdrivescope --json ollama setup | jq '.data'
 ```
 
 ## Environment Variables
@@ -86,7 +90,7 @@ gdrivescope --json index --scope FOLDER_ID --embedding-provider voyage --rebuild
 - **Ollama:** `GDRIVESCOPE_OLLAMA_HOST`, `GDRIVESCOPE_OLLAMA_MODEL`, `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL`, `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS`
 - **Limits:** `GDRIVESCOPE_MAX_SIZE`, `GDRIVESCOPE_MAX_PDF_PAGES`
 
-Error codes: `AUTH_ERROR` `NOT_FOUND` `MISSING_PARAM` `QUOTA_EXCEEDED` `PROVIDER_ERROR` `ERROR`
+Error codes: `AUTH_REQUIRED` `AUTH_FAILED` `SCOPE_REQUIRED` `NODE_NOT_FOUND` `MISSING_ARG` `BAD_ARG` `USAGE` `PROVIDER_UNCONFIGURED` `PROVIDER_UNKNOWN` `PROVIDER_UNAVAILABLE` `EMBEDDING_DIM_MISMATCH` `NO_EMBEDDINGS` `VEC_EXTENSION_FAILED` `LLM_CALL_FAILED` `EMBED_CALL_FAILED` `EXTRACT_FAILED` `UNSUPPORTED_MIME` `OLLAMA_PULL_FAILED` `UNKNOWN_COMMAND` `UNKNOWN`
 
 ## References
 

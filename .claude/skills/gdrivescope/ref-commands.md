@@ -46,7 +46,7 @@ gdrivescope index [flags]
 | `--embedding-provider` | `<name>` | Embedding provider |
 | `--rebuild-embeddings` | | Drop + recreate vector table at current dimension |
 | `--concurrency-drive` | `<N>` | Max parallel Drive API calls (default: 15) |
-| `--concurrency-llm` | `<N>` | Max parallel LLM/embedding calls (default: 4) |
+| `--concurrency-llm` | `<N>` | Max parallel LLM/embedding calls (default: 4; 1 when provider is `ollama`) |
 | `--concurrency` | `<N>` | Shorthand for `--concurrency-drive` |
 | `--max-size` | `<bytes>` | Skip files larger than this (default: 20971520) |
 | `--max-pdf-pages` | `<N>` | Slice PDFs to first N pages (default: 10) |
@@ -105,6 +105,33 @@ gdrivescope --json config add-root FOLDER_ID --label "Shared Drive" | jq '.data'
 
 # Remove a root
 gdrivescope --json config remove-root FOLDER_ID | jq '.data'
+```
+
+## Ollama
+
+```
+gdrivescope ollama setup [flags]
+```
+
+Probes a running Ollama instance, pulls any missing models, validates chat and
+embedding endpoints, then writes the chosen settings into `config.toml`.
+
+| Flag | Args | Purpose |
+|------|------|---------|
+| `--host` | `<URL>` | Ollama base URL (default `http://localhost:11434`) |
+| `--llm-model` | `<NAME>` | LLM model to install (default `llama3.2:3b`) |
+| `--embedding-model` | `<NAME>` | Embedding model (default `nomic-embed-text`) |
+| `--skip-pull` | | Assume models are already installed |
+
+```bash
+# Default setup: pull llama3.2:3b + nomic-embed-text, write config
+gdrivescope --json ollama setup | jq '.data'
+
+# Custom host + model
+gdrivescope --json ollama setup --host http://remote:11434 --llm-model llama3.1:8b | jq '.data'
+
+# Skip model pull (models already present)
+gdrivescope --json ollama setup --skip-pull | jq '.data'
 ```
 
 ## Graph
