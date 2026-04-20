@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { resolveLlmProvider } from '../../src/llm/resolver.js';
+import { resolveLlmProvider } from '../../src/llm/llm-resolver.js';
 import { CliError } from '../../src/utils/errors.js';
 import { useEnvGuard } from '../helpers/envGuard.js';
 

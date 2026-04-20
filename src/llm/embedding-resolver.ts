@@ -7,15 +7,17 @@ import { CliError } from '../utils/errors.js';
 import { info } from '../utils/logging.js';
 import { AzureOpenaiEmbeddingProvider } from './azure-openai-embedding.js';
 import type { EmbeddingProvider } from './embedding-provider.js';
+import {
+  type EmbeddingProviderName,
+  readEmbeddingDimsEnv,
+  readEmbeddingModelEnv,
+  requireEnv,
+} from './env.js';
 import { OllamaEmbeddingProvider } from './ollama-embedding.js';
 import { OpenaiEmbeddingProvider } from './openai-embedding.js';
 import { VoyageEmbeddingProvider } from './voyage-embedding.js';
 
-export type EmbeddingProviderName =
-  | 'openai'
-  | 'azure-openai'
-  | 'voyage'
-  | 'ollama';
+export type { EmbeddingProviderName } from './env.js';
 
 export interface ResolveEmbeddingOptions {
   flagProvider?: string;
@@ -52,39 +54,18 @@ function resolveModel(
   name: EmbeddingProviderName,
   configModel?: string
 ): string | undefined {
-  const envModel = {
-    openai: Bun.env.GDRIVESCOPE_OPENAI_EMBEDDING_MODEL,
-    'azure-openai': Bun.env.GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_MODEL,
-    voyage: Bun.env.GDRIVESCOPE_VOYAGE_MODEL,
-    ollama: Bun.env.GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL,
-  }[name];
-  return envModel ?? configModel ?? undefined;
-}
-
-function parseDimsEnv(raw: string | undefined): number | undefined {
-  if (!raw) return undefined;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
-    throw new CliError(
-      `Invalid embedding dimensions env var value: ${raw}`,
-      'BAD_ARG'
-    );
-  }
-  return n;
+  return readEmbeddingModelEnv(name) ?? configModel ?? undefined;
 }
 
 function resolveDimensions(
   name: EmbeddingProviderName,
   configDims?: number
 ): number | undefined {
-  const envRaw = {
-    openai: Bun.env.GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS,
-    'azure-openai': Bun.env.GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS,
-    voyage: Bun.env.GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS,
-    ollama: undefined, // handled inline with the rest of the ollama config
-  }[name];
-  return parseDimsEnv(envRaw) ?? configDims ?? undefined;
+  return readEmbeddingDimsEnv(name) ?? configDims ?? undefined;
 }
+
+const KEY_HINT =
+  'Export it or pass --embedding-provider with a different provider.';
 
 export function resolveEmbeddingProvider(
   opts: ResolveEmbeddingOptions
@@ -122,24 +103,15 @@ export function resolveEmbeddingProvider(
   const dimensions = resolveDimensions(name, opts.embeddingConfig?.dimensions);
 
   if (name === 'openai') {
-    const key = Bun.env.OPENAI_API_KEY;
-    if (!key) {
-      throw new CliError(
-        'OPENAI_API_KEY is not set. Export it or pass --embedding-provider with a different provider.',
-        'PROVIDER_UNCONFIGURED'
-      );
-    }
-    return new OpenaiEmbeddingProvider({ apiKey: key, model, dimensions });
+    return new OpenaiEmbeddingProvider({
+      apiKey: requireEnv('OPENAI_API_KEY', KEY_HINT),
+      model,
+      dimensions,
+    });
   }
 
   if (name === 'azure-openai') {
-    const apiKey = Bun.env.AZURE_OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new CliError(
-        'AZURE_OPENAI_API_KEY is not set. Export it or pass --embedding-provider with a different provider.',
-        'PROVIDER_UNCONFIGURED'
-      );
-    }
+    const apiKey = requireEnv('AZURE_OPENAI_API_KEY', KEY_HINT);
     const endpoint =
       Bun.env.AZURE_OPENAI_ENDPOINT ?? opts.azureConfig?.endpoint;
     if (!endpoint) {
@@ -164,14 +136,11 @@ export function resolveEmbeddingProvider(
   }
 
   if (name === 'voyage') {
-    const key = Bun.env.VOYAGE_API_KEY;
-    if (!key) {
-      throw new CliError(
-        'VOYAGE_API_KEY is not set. Export it or pass --embedding-provider with a different provider.',
-        'PROVIDER_UNCONFIGURED'
-      );
-    }
-    return new VoyageEmbeddingProvider({ apiKey: key, model, dimensions });
+    return new VoyageEmbeddingProvider({
+      apiKey: requireEnv('VOYAGE_API_KEY', KEY_HINT),
+      model,
+      dimensions,
+    });
   }
 
   // name === 'ollama' — no API key required, local service
@@ -182,9 +151,7 @@ export function resolveEmbeddingProvider(
   const ollamaModel =
     model ?? opts.ollamaConfig?.embeddingModel ?? 'nomic-embed-text';
   const ollamaDims =
-    Number(Bun.env.GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS) ||
-    opts.ollamaConfig?.embeddingDimensions ||
-    768;
+    dimensions ?? opts.ollamaConfig?.embeddingDimensions ?? 768;
   return new OllamaEmbeddingProvider({
     host,
     model: ollamaModel,

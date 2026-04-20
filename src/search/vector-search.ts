@@ -24,11 +24,6 @@ export interface SemanticSearchOptions {
   classification?: string;
 }
 
-interface KnnRow {
-  id: string;
-  distance: number;
-}
-
 export async function semanticSearch(
   opts: SemanticSearchOptions
 ): Promise<Hit[]> {
@@ -54,26 +49,16 @@ export async function semanticSearch(
   // Over-fetch so post-filters (scope, classification, threshold) still
   // leave room to hit `limit`.
   const kOverSample = limit * 3;
-
-  const rows = opts.store.db
-    .prepare(
-      `SELECT node_id AS id, distance
-         FROM embeddings
-         WHERE embedding MATCH ? AND k = ?
-         ORDER BY distance`
-    )
-    .all(queryBuf, kOverSample) as KnnRow[];
+  const rows = opts.store.knnSearch(queryBuf, kOverSample);
 
   const scopeSet = opts.scope ? descendants(opts.graph, opts.scope) : null;
   const hits: Hit[] = [];
-  for (const row of rows) {
-    const node = opts.store.getNode(row.id);
-    if (!node) continue;
+  for (const { node, distance } of rows) {
     if (scopeSet && !scopeSet.has(node.id)) continue;
     if (opts.classification && node.classification !== opts.classification) {
       continue;
     }
-    const score = 1 - row.distance;
+    const score = 1 - distance;
     if (score < threshold) continue;
     hits.push({
       id: node.id,

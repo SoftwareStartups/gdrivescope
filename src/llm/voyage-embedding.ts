@@ -1,4 +1,5 @@
 import { CliError } from '../utils/errors.js';
+import { batchEmbed, validateProbeDimensions } from './embed-batch.js';
 import type { EmbeddingProvider } from './embedding-provider.js';
 
 const BATCH = 128;
@@ -74,40 +75,29 @@ export class VoyageEmbeddingProvider implements EmbeddingProvider {
     this.explicitDimensions = opts.dimensions;
   }
 
-  async probe(): Promise<void> {
-    const body: VoyageRequestBody = { model: this.model, input: ['probe'] };
+  private buildBody(input: string[]): VoyageRequestBody {
+    const body: VoyageRequestBody = { model: this.model, input };
     if (this.explicitDimensions !== undefined) {
       body.output_dimension = this.explicitDimensions;
     }
-    const json = await callVoyage(this.apiKey, body);
-    const actual = json.data?.[0]?.embedding.length;
-    if (!actual) {
-      throw new CliError(
-        'Voyage returned an empty embedding probe response',
-        'EMBED_CALL_FAILED'
-      );
-    }
-    if (actual !== this.dimensions) {
-      throw new CliError(
-        `Voyage model ${this.model} produced ${actual}-dim vectors, config declared ${this.dimensions}-dim. Set GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS=${actual} or pick a different model.`,
-        'EMBEDDING_DIM_MISMATCH'
-      );
-    }
+    return body;
   }
 
-  async embed(texts: string[]): Promise<number[][]> {
-    const out: number[][] = [];
-    for (let i = 0; i < texts.length; i += BATCH) {
-      const batch = texts.slice(i, i + BATCH);
-      const body: VoyageRequestBody = { model: this.model, input: batch };
-      if (this.explicitDimensions !== undefined) {
-        body.output_dimension = this.explicitDimensions;
-      }
-      const json = await callVoyage(this.apiKey, body);
-      for (const item of json.data) {
-        out.push(item.embedding);
-      }
-    }
-    return out;
+  async probe(): Promise<void> {
+    const json = await callVoyage(this.apiKey, this.buildBody(['probe']));
+    validateProbeDimensions({
+      actual: json.data?.[0]?.embedding.length,
+      declared: this.dimensions,
+      providerLabel: 'Voyage',
+      model: this.model,
+      remediationHint: `Set GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS=${json.data?.[0]?.embedding.length} or pick a different model.`,
+    });
+  }
+
+  embed(texts: string[]): Promise<number[][]> {
+    return batchEmbed(texts, BATCH, async (batch) => {
+      const json = await callVoyage(this.apiKey, this.buildBody([...batch]));
+      return json.data.map((item) => item.embedding);
+    });
   }
 }

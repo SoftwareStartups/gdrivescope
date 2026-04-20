@@ -65,6 +65,7 @@ export async function main(argv: string[]): Promise<number> {
       threshold: { type: 'string' },
       classification: { type: 'string' },
       type: { type: 'string' },
+      mode: { type: 'string' },
       format: { type: 'string' },
       output: { type: 'string', short: 'o' },
     },

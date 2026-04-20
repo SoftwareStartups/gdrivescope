@@ -15,7 +15,7 @@ import { resolveAncestry } from '../../drive/ancestry.js';
 import { createDriveClient } from '../../drive/client.js';
 import { openStore } from '../../graph/store.js';
 import { resolveEmbeddingProvider } from '../../llm/embedding-resolver.js';
-import { resolveLlmProvider } from '../../llm/resolver.js';
+import { resolveLlmProvider } from '../../llm/llm-resolver.js';
 import type { ApiResponse } from '../../models/api-response.js';
 import { success } from '../../models/api-response.js';
 import { runIndexPipeline } from '../../pipeline/index-pipeline.js';
@@ -61,6 +61,9 @@ export interface IndexRunResult {
   pruned: number;
   skippedRefs: number;
   usedFallback: boolean;
+  traverseMs: number;
+  processMs: number;
+  embedMs: number;
 }
 
 export interface IndexData {
@@ -304,6 +307,9 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
         pruned: stats.pruned,
         skippedRefs: stats.skippedRefs,
         usedFallback: ancestry.usedFallback,
+        traverseMs: stats.traverseMs,
+        processMs: stats.processMs,
+        embedMs: stats.embedMs,
       });
     }
 
@@ -313,6 +319,11 @@ export async function run(flags: IndexFlags): Promise<ApiResponse<IndexData>> {
   } finally {
     store.close();
   }
+}
+
+function formatMs(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function renderRun(run: IndexRunResult): string {
@@ -329,6 +340,10 @@ function renderRun(run: IndexRunResult): string {
     `  errors:      ${run.errors}`,
     `  pruned:      ${run.pruned}`,
   ];
+  const timingParts: string[] = [`traverse ${formatMs(run.traverseMs)}`];
+  if (run.processMs > 0) timingParts.push(`process ${formatMs(run.processMs)}`);
+  if (run.embedMs > 0) timingParts.push(`embed ${formatMs(run.embedMs)}`);
+  lines.push(`  timing:      ${timingParts.join(', ')}`);
   if (run.skippedRefs > 0) {
     lines.push(
       `  skipped-refs: ${run.skippedRefs}  (broken shortcuts / unlistable folders — see warnings above)`

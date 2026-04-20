@@ -1,4 +1,5 @@
 import { CliError } from '../utils/errors.js';
+import { batchEmbed, validateProbeDimensions } from './embed-batch.js';
 import type { EmbeddingProvider } from './embedding-provider.js';
 
 const BATCH = 64;
@@ -7,6 +8,34 @@ export interface OllamaEmbeddingOptions {
   host: string;
   model: string;
   dimensions: number;
+}
+
+async function callOllamaEmbed(
+  host: string,
+  model: string,
+  input: string | string[]
+): Promise<number[][]> {
+  let response: Response;
+  try {
+    response = await fetch(`${host}/api/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, input }),
+    });
+  } catch {
+    throw new CliError(
+      `Ollama is not reachable at ${host}. Run \`ollama serve\` or \`gdrivescope ollama setup\`.`,
+      'PROVIDER_UNAVAILABLE'
+    );
+  }
+  if (!response.ok) {
+    throw new CliError(
+      `Ollama /api/embed returned ${response.status}`,
+      'EMBED_CALL_FAILED'
+    );
+  }
+  const json = (await response.json()) as { embeddings: number[][] };
+  return json.embeddings ?? [];
 }
 
 export class OllamaEmbeddingProvider implements EmbeddingProvider {
@@ -34,64 +63,19 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     model: string,
     declaredDims: number
   ): Promise<void> {
-    let response: Response;
-    try {
-      response = await fetch(`${host}/api/embed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, input: 'probe' }),
-      });
-    } catch {
-      throw new CliError(
-        `Ollama is not reachable at ${host}. Run \`ollama serve\` or \`gdrivescope ollama setup\`.`,
-        'PROVIDER_UNAVAILABLE'
-      );
-    }
-    if (!response.ok) {
-      throw new CliError(
-        `Ollama /api/embed returned ${response.status}`,
-        'EMBED_CALL_FAILED'
-      );
-    }
-    const json = (await response.json()) as { embeddings: number[][] };
-    const actual = json.embeddings?.[0]?.length;
-    if (!actual) {
-      throw new CliError('Empty embedding response', 'EMBED_CALL_FAILED');
-    }
-    if (actual !== declaredDims) {
-      throw new CliError(
-        `Ollama model ${model} produced ${actual}-dim vectors, config declared ${declaredDims}-dim. Run \`gdrivescope ollama setup\` to reconcile.`,
-        'EMBEDDING_DIM_MISMATCH'
-      );
-    }
+    const vectors = await callOllamaEmbed(host, model, 'probe');
+    validateProbeDimensions({
+      actual: vectors[0]?.length,
+      declared: declaredDims,
+      providerLabel: 'Ollama',
+      model,
+      remediationHint: 'Run `gdrivescope ollama setup` to reconcile.',
+    });
   }
 
-  async embed(texts: string[]): Promise<number[][]> {
-    const out: number[][] = [];
-    for (let i = 0; i < texts.length; i += BATCH) {
-      const batch = texts.slice(i, i + BATCH);
-      let response: Response;
-      try {
-        response = await fetch(`${this.host}/api/embed`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: this.model, input: batch }),
-        });
-      } catch {
-        throw new CliError(
-          `Ollama is not reachable at ${this.host}. Run \`ollama serve\` or \`gdrivescope ollama setup\`.`,
-          'PROVIDER_UNAVAILABLE'
-        );
-      }
-      if (!response.ok) {
-        throw new CliError(
-          `Ollama /api/embed returned ${response.status}`,
-          'EMBED_CALL_FAILED'
-        );
-      }
-      const json = (await response.json()) as { embeddings: number[][] };
-      out.push(...json.embeddings);
-    }
-    return out;
+  embed(texts: string[]): Promise<number[][]> {
+    return batchEmbed(texts, BATCH, (batch) =>
+      callOllamaEmbed(this.host, this.model, [...batch])
+    );
   }
 }

@@ -53,14 +53,19 @@ When the explicit value differs from a provider's built-in default, that value i
 | `voyage` | Embedding | `voyage-3-lite` | `VOYAGE_API_KEY` |
 | `ollama` | Embedding | `nomic-embed-text` | none (local) |
 
+## Concurrency Defaults
+
+The index pipeline accepts `--concurrency-llm` and defaults it to `4` for remote providers and `1` for Ollama. Local Ollama serializes inference per model, so >1 concurrent summarize calls mostly add queueing latency. Users can still override with `--concurrency-llm N`; the pipeline emits an info line if N>1 is passed against Ollama.
+
 ## Adding a New Provider
 
 1. Create `<name>.ts` implementing `LlmProvider` and/or `<name>-embedding.ts` implementing `EmbeddingProvider`
 2. Constructor takes an options object with `model?: string` (default set in constructor)
-3. Add the name to the `LlmProviderName` / `EmbeddingProviderName` union and `KNOWN` set in the relevant resolver
-4. Add the construction branch in the resolver's `if` chain
-5. Throw `CliError('...', 'PROVIDER_UNCONFIGURED')` when the required API key is missing
+3. Add the name to the `LlmProviderName` / `EmbeddingProviderName` union in `src/llm/env.ts` and the `KNOWN` set in the relevant resolver
+4. Add the env var entries to the model/dimension maps in `env.ts`
+5. Add the construction branch in the resolver's `if` chain (use `requireEnv` for API keys)
 6. Add inference check in `inferLlmProvider()` / `inferEmbeddingProvider()`
+7. For embedding providers, use `batchEmbed` + `validateProbeDimensions` helpers from `src/llm/embed-batch.ts`
 
 ## Structured Output
 

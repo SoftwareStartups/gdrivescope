@@ -5,8 +5,8 @@ import {
 } from '../../config/workspace.js';
 import { createDriveClient } from '../../drive/client.js';
 import type { ApiResponse } from '../../models/api-response.js';
-import { fail, success } from '../../models/api-response.js';
-import { toResponse } from '../../utils/errors.js';
+import { success } from '../../models/api-response.js';
+import { CliError, toResponse } from '../../utils/errors.js';
 
 export interface ConfigAddRootFlags {
   _positional?: string;
@@ -39,14 +39,14 @@ Options:
 export async function run(
   flags: ConfigAddRootFlags
 ): Promise<ApiResponse<ConfigAddRootData>> {
-  const raw = flags._positional;
-  if (!raw) {
-    return fail(
-      'missing FOLDER_ID argument — usage: gdrivescope config add-root <FOLDER_ID>',
-      'USAGE'
-    );
-  }
   try {
+    const raw = flags._positional;
+    if (!raw) {
+      throw new CliError(
+        'missing FOLDER_ID argument — usage: gdrivescope config add-root <FOLDER_ID>',
+        'USAGE'
+      );
+    }
     const client = await createDriveClient();
     const response = await client.files.get({
       fileId: raw,

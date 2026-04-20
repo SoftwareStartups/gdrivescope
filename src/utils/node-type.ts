@@ -1,3 +1,5 @@
+import { CliError } from './errors.js';
+
 export type NodeType = 'folder' | 'file' | 'shortcut' | 'other';
 
 export const NODE_TYPES: readonly NodeType[] = [
@@ -33,4 +35,15 @@ export function classifyNodeType(mime: string): NodeType {
 
 export function isNodeType(value: string): value is NodeType {
   return (NODE_TYPES as readonly string[]).includes(value);
+}
+
+export function parseTypeFilter(value: string | undefined): NodeType | null {
+  if (value === undefined) return null;
+  if (!isNodeType(value)) {
+    throw new CliError(
+      `invalid --type value: ${value} (expected ${NODE_TYPES.join('|')})`,
+      'USAGE'
+    );
+  }
+  return value;
 }

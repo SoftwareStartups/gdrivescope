@@ -1,5 +1,7 @@
 import OpenAI from 'openai';
+import { withBackoff } from '../pipeline/concurrency.js';
 import { CliError } from '../utils/errors.js';
+import { batchEmbed, validateProbeDimensions } from './embed-batch.js';
 import type { EmbeddingProvider } from './embedding-provider.js';
 
 const BATCH = 96;
@@ -32,75 +34,56 @@ export class OpenaiEmbeddingProvider implements EmbeddingProvider {
     this.explicitDimensions = opts.dimensions;
   }
 
+  private buildParams(
+    input: string | string[]
+  ): OpenAI.Embeddings.EmbeddingCreateParams {
+    const params: OpenAI.Embeddings.EmbeddingCreateParams = {
+      model: this.model,
+      input,
+    };
+    if (this.explicitDimensions !== undefined) {
+      params.dimensions = this.explicitDimensions;
+    }
+    return params;
+  }
+
   async probe(): Promise<void> {
     let response: OpenAI.Embeddings.CreateEmbeddingResponse;
     try {
-      const params: OpenAI.Embeddings.EmbeddingCreateParams = {
-        model: this.model,
-        input: 'probe',
-      };
-      if (this.explicitDimensions !== undefined) {
-        params.dimensions = this.explicitDimensions;
-      }
-      response = await this.client.embeddings.create(params);
+      response = await this.client.embeddings.create(this.buildParams('probe'));
     } catch (err) {
-      if (err instanceof OpenAI.APIError) {
-        throw new CliError(
-          `OpenAI embedding probe failed (status ${err.status}): ${err.message}`,
-          'EMBED_CALL_FAILED'
-        );
-      }
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new CliError(
-        `OpenAI embedding probe failed: ${msg}`,
-        'EMBED_CALL_FAILED'
-      );
+      throw wrapOpenaiError('OpenAI embedding probe failed', err);
     }
-    const actual = response.data?.[0]?.embedding.length;
-    if (!actual) {
-      throw new CliError(
-        'OpenAI returned an empty embedding probe response',
-        'EMBED_CALL_FAILED'
-      );
-    }
-    if (actual !== this.dimensions) {
-      throw new CliError(
-        `OpenAI model ${this.model} produced ${actual}-dim vectors, config declared ${this.dimensions}-dim. Set GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS=${actual} or pick a different model.`,
-        'EMBEDDING_DIM_MISMATCH'
-      );
-    }
+    validateProbeDimensions({
+      actual: response.data?.[0]?.embedding.length,
+      declared: this.dimensions,
+      providerLabel: 'OpenAI',
+      model: this.model,
+      remediationHint: `Set GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS=${response.data?.[0]?.embedding.length} or pick a different model.`,
+    });
   }
 
-  async embed(texts: string[]): Promise<number[][]> {
-    const out: number[][] = [];
-    for (let i = 0; i < texts.length; i += BATCH) {
-      const batch = texts.slice(i, i + BATCH);
+  embed(texts: string[]): Promise<number[][]> {
+    return batchEmbed(texts, BATCH, async (batch) => {
       try {
-        const params: OpenAI.Embeddings.EmbeddingCreateParams = {
-          model: this.model,
-          input: batch,
-        };
-        if (this.explicitDimensions !== undefined) {
-          params.dimensions = this.explicitDimensions;
-        }
-        const response = await this.client.embeddings.create(params);
-        for (const item of response.data) {
-          out.push(item.embedding);
-        }
-      } catch (err) {
-        if (err instanceof OpenAI.APIError) {
-          throw new CliError(
-            `OpenAI embedding call failed (status ${err.status}): ${err.message}`,
-            'EMBED_CALL_FAILED'
-          );
-        }
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new CliError(
-          `OpenAI embedding call failed: ${msg}`,
-          'EMBED_CALL_FAILED'
+        const response = await withBackoff(() =>
+          this.client.embeddings.create(this.buildParams([...batch]))
         );
+        return response.data.map((item) => item.embedding);
+      } catch (err) {
+        throw wrapOpenaiError('OpenAI embedding call failed', err);
       }
-    }
-    return out;
+    });
   }
+}
+
+function wrapOpenaiError(prefix: string, err: unknown): CliError {
+  if (err instanceof OpenAI.APIError) {
+    return new CliError(
+      `${prefix} (status ${err.status}): ${err.message}`,
+      'EMBED_CALL_FAILED'
+    );
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return new CliError(`${prefix}: ${msg}`, 'EMBED_CALL_FAILED');
 }

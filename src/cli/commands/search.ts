@@ -10,9 +10,9 @@ import { getDbPath } from '../../utils/config.js';
 import { CliError, toResponse } from '../../utils/errors.js';
 import {
   classifyNodeType,
-  isNodeType,
   NODE_TYPES,
   type NodeType,
+  parseTypeFilter,
 } from '../../utils/node-type.js';
 import { parsePositiveInt } from '../../utils/parse.js';
 
@@ -85,17 +85,6 @@ function parseThreshold(value: string | undefined): number | undefined {
     throw new CliError(`invalid --threshold value: ${value}`, 'USAGE');
   }
   return n;
-}
-
-function parseTypeFilter(value: string | undefined): NodeType | null {
-  if (value === undefined) return null;
-  if (!isNodeType(value)) {
-    throw new CliError(
-      `invalid --type value: ${value} (expected ${NODE_TYPES.join('|')})`,
-      'USAGE'
-    );
-  }
-  return value;
 }
 
 export async function run(

@@ -31,9 +31,15 @@ export interface InitVectorTableOptions {
   rebuild?: boolean;
 }
 
+export interface KnnHit {
+  node: Node;
+  distance: number;
+}
+
 export interface Store {
   db: Database;
   upsertNode(node: DriveNodeInput): void;
+  upsertNodes(nodes: readonly DriveNodeInput[]): void;
   getNode(id: string): Node | null;
   listChildren(parentId: string | null): Node[];
   allNodes(): Node[];
@@ -51,6 +57,7 @@ export interface Store {
   clearEmbeddedHashes(): void;
   clearEmbeddings(): void;
   hasVectorTable(): boolean;
+  knnSearch(queryBuf: Uint8Array, k: number): KnnHit[];
   close(): void;
 }
 
@@ -258,6 +265,7 @@ export function openStore(path: string): Store {
   // because they bind against a virtual table that may not exist yet.
   let deleteEmbeddingStmt: Statement | null = null;
   let insertEmbeddingStmt: Statement | null = null;
+  let knnStmt: Statement | null = null;
   const deleteEmbeddingDimsMeta = db.prepare(
     "DELETE FROM meta WHERE k = 'embedding_dims'"
   );
@@ -270,6 +278,7 @@ export function openStore(path: string): Store {
   function resetEmbeddingStmts(): void {
     deleteEmbeddingStmt = null;
     insertEmbeddingStmt = null;
+    knnStmt = null;
   }
 
   function initVec(dims: number, opts?: InitVectorTableOptions): void {
@@ -316,21 +325,42 @@ export function openStore(path: string): Store {
     return insertEmbeddingStmt;
   }
 
+  function getKnnStmt(): Statement {
+    if (!knnStmt) {
+      knnStmt = db.prepare(
+        `SELECT n.*, e.distance AS distance
+           FROM embeddings e
+           JOIN nodes n ON n.id = e.node_id
+           WHERE e.embedding MATCH ? AND e.k = ?
+           ORDER BY e.distance`
+      );
+    }
+    return knnStmt;
+  }
+
+  function runUpsert(node: DriveNodeInput): void {
+    upsertStmt.run(
+      node.id,
+      node.parentId,
+      node.name,
+      node.mimeType,
+      node.size ?? null,
+      node.modifiedTime ?? null,
+      node.createdTime ?? null,
+      node.webViewLink ?? null,
+      node.rootId ?? null,
+      JSON.stringify(node.metadata)
+    );
+  }
+
   return {
     db,
-    upsertNode(node: DriveNodeInput): void {
-      upsertStmt.run(
-        node.id,
-        node.parentId,
-        node.name,
-        node.mimeType,
-        node.size ?? null,
-        node.modifiedTime ?? null,
-        node.createdTime ?? null,
-        node.webViewLink ?? null,
-        node.rootId ?? null,
-        JSON.stringify(node.metadata)
-      );
+    upsertNode: runUpsert,
+    upsertNodes(nodes: readonly DriveNodeInput[]): void {
+      if (nodes.length === 0) return;
+      db.transaction(() => {
+        for (const n of nodes) runUpsert(n);
+      })();
     },
     getNode(id: string): Node | null {
       const row = getNodeStmt.get(id) as NodeRow | null;
@@ -432,6 +462,15 @@ export function openStore(path: string): Store {
     },
     hasVectorTable(): boolean {
       return hasVec();
+    },
+    knnSearch(queryBuf: Uint8Array, k: number): KnnHit[] {
+      const rows = getKnnStmt().all(queryBuf, k) as Array<
+        NodeRow & { distance: number }
+      >;
+      return rows.map((row) => ({
+        node: rowToNode(row),
+        distance: row.distance,
+      }));
     },
     close(): void {
       db.close();

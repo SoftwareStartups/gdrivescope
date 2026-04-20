@@ -22,8 +22,8 @@ import { nodePath } from '../graph/paths.js';
 import type { Store } from '../graph/store.js';
 import type { EmbeddingProvider } from '../llm/embedding-provider.js';
 import type { LlmProvider } from '../llm/provider.js';
-import { warn } from '../utils/logging.js';
-import { createSemaphore, withBackoff } from './concurrency.js';
+import { info, warn } from '../utils/logging.js';
+import { createSemaphore } from './concurrency.js';
 import { computePruneSet } from './pruning.js';
 
 // Whole-doc markdown often overruns a model's context window; embed the
@@ -33,6 +33,8 @@ import { computePruneSet } from './pruning.js';
 const EMBED_WINDOW = 2000;
 const DEFAULT_DRIVE_CONCURRENCY = 15;
 const DEFAULT_LLM_CONCURRENCY = 4;
+const DEFAULT_OLLAMA_LLM_CONCURRENCY = 1;
+const TRAVERSE_UPSERT_BATCH = 200;
 
 export interface RunIndexOpts {
   store: Store;
@@ -63,12 +65,23 @@ export interface IndexStats extends TraverseResult {
   skipped: number;
   errors: number;
   pruned: number;
+  traverseMs: number;
+  processMs: number;
+  embedMs: number;
 }
 
 export async function runIndexPipeline(
   opts: RunIndexOpts
 ): Promise<IndexStats> {
   const seenIds = new Set<string>();
+  const traverseBuffer: DriveNodeInput[] = [];
+  const flushBuffer = (): void => {
+    if (traverseBuffer.length === 0) return;
+    opts.store.upsertNodes(traverseBuffer);
+    traverseBuffer.length = 0;
+  };
+
+  const traverseStart = performance.now();
   const traverseStats = await traverseDriveFolder(opts.client, {
     rootId: opts.rootId,
     anchorRootId: opts.anchorRootId,
@@ -76,9 +89,13 @@ export async function runIndexPipeline(
     concurrency: opts.driveConcurrency ?? opts.concurrency,
     onNode: (n) => {
       seenIds.add(n.id);
-      opts.store.upsertNode(n);
+      traverseBuffer.push(n);
+      if (traverseBuffer.length >= TRAVERSE_UPSERT_BATCH) flushBuffer();
     },
   });
+  flushBuffer();
+  const traverseMs = performance.now() - traverseStart;
+
   const stats: IndexStats = {
     ...traverseStats,
     extracted: 0,
@@ -87,10 +104,14 @@ export async function runIndexPipeline(
     skipped: 0,
     errors: 0,
     pruned: 0,
+    traverseMs,
+    processMs: 0,
+    embedMs: 0,
   };
 
+  const graph = hydrateGraph(opts.store);
+
   if (opts.prune) {
-    const graph = hydrateGraph(opts.store);
     const toDelete = computePruneSet({
       graph,
       seenIds,
@@ -113,16 +134,16 @@ export async function runIndexPipeline(
   const llm = opts.llm;
   const driveConcurrency =
     opts.driveConcurrency ?? opts.concurrency ?? DEFAULT_DRIVE_CONCURRENCY;
-  const llmConcurrency = opts.llmConcurrency ?? DEFAULT_LLM_CONCURRENCY;
+  const llmConcurrency = resolveLlmConcurrency(llm, opts.llmConcurrency);
   const driveSem = createSemaphore(Math.max(1, driveConcurrency));
   const llmSem = createSemaphore(Math.max(1, llmConcurrency));
 
   const workDir = mkdtempSync(join(tmpdir(), 'gdrivescope-'));
   try {
-    const graph = hydrateGraph(opts.store);
     const { work, skipped } = buildWorkList(graph, opts.resume);
     stats.skipped += skipped;
 
+    const processStart = performance.now();
     await Promise.all(
       work.map((node) =>
         processOne({
@@ -137,6 +158,7 @@ export async function runIndexPipeline(
         })
       )
     );
+    stats.processMs = performance.now() - processStart;
 
     if (opts.embedding) {
       try {
@@ -148,22 +170,33 @@ export async function runIndexPipeline(
           // Vec0 table was dropped — every existing last_embedded_hash is
           // now a lie. Reset so the filter below re-embeds everything once.
           opts.store.clearEmbeddedHashes();
+          for (const id of graph.nodes()) {
+            graph.getNodeAttributes(id).lastEmbeddedHash = null;
+          }
         }
-        const freshGraph = hydrateGraph(opts.store);
-        const toEmbed = freshGraph
-          .nodes()
-          .map((nid) => freshGraph.getNodeAttributes(nid))
-          .filter(
-            (n): n is typeof n & { extractedMd: string; contentHash: string } =>
-              n.extractedMd != null &&
-              n.contentHash != null &&
-              n.contentHash !== n.lastEmbeddedHash
-          );
+        // Iterate the full (already hydrated) graph — content_hash may have
+        // changed out-of-band on any node, not just those in `work`.
+        const toEmbed: Array<
+          Node & { extractedMd: string; contentHash: string }
+        > = [];
+        for (const id of graph.nodes()) {
+          const n = graph.getNodeAttributes(id);
+          if (
+            n.extractedMd != null &&
+            n.contentHash != null &&
+            n.contentHash !== n.lastEmbeddedHash
+          ) {
+            toEmbed.push(
+              n as Node & { extractedMd: string; contentHash: string }
+            );
+          }
+        }
         if (toEmbed.length > 0) {
+          const embedStart = performance.now();
           const texts = toEmbed.map((n) =>
             n.extractedMd.slice(0, EMBED_WINDOW)
           );
-          const vectors = await withBackoff(() => embedding.embed(texts));
+          const vectors = await embedding.embed(texts);
           let written = 0;
           for (let i = 0; i < toEmbed.length; i += 1) {
             const node = toEmbed[i];
@@ -174,6 +207,7 @@ export async function runIndexPipeline(
             written += 1;
           }
           stats.embedded = written;
+          stats.embedMs = performance.now() - embedStart;
         }
       } catch (err) {
         stats.errors += 1;
@@ -186,6 +220,23 @@ export async function runIndexPipeline(
     rmSync(workDir, { recursive: true, force: true });
   }
   return stats;
+}
+
+function resolveLlmConcurrency(
+  llm: LlmProvider,
+  explicit: number | undefined
+): number {
+  if (explicit !== undefined) {
+    if (llm.name === 'ollama' && explicit > 1) {
+      info(
+        `index: --concurrency-llm=${explicit} against Ollama; the local model usually serializes inference per request, so >1 mostly adds queueing latency.`
+      );
+    }
+    return explicit;
+  }
+  return llm.name === 'ollama'
+    ? DEFAULT_OLLAMA_LLM_CONCURRENCY
+    : DEFAULT_LLM_CONCURRENCY;
 }
 
 interface WorkList {
@@ -298,21 +349,28 @@ async function processOne(p: ProcessOneParams): Promise<void> {
   // other tasks can download while this one blocks on the LLM semaphore.
   const releaseLlm = await llmSem.acquire();
   try {
-    const summary = await withBackoff(() =>
-      llm.summarize({
-        markdown,
-        filename: node.name,
-        path: nodePath(graph, node.id),
-        mimeType: downloadMime,
-      })
-    );
+    const summary = await llm.summarize({
+      markdown,
+      filename: node.name,
+      path: nodePath(graph, node.id),
+      mimeType: downloadMime,
+    });
+    const keyTopics = JSON.stringify(summary.keyTopics);
     opts.store.updateSummary(node.id, {
       summary: summary.summary,
       classification: summary.classification,
-      keyTopics: JSON.stringify(summary.keyTopics),
+      keyTopics,
       extractedMd: markdown,
       contentHash: hash,
     });
+    // Mirror the write onto the in-memory node so the embedding phase can
+    // read fresh extractedMd/contentHash without a second hydrate from SQLite.
+    node.summary = summary.summary;
+    node.classification = summary.classification;
+    node.keyTopics = keyTopics;
+    node.extractedMd = markdown;
+    node.contentHash = hash;
+    node.lastError = null;
     stats.summarized += 1;
   } catch (err) {
     stats.errors += 1;
