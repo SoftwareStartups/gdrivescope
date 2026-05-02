@@ -7,3 +7,5 @@ pre-commit:
     lint:
       glob: "*.ts"
       run: bunx biome lint --no-errors-on-unmatched {staged_files}
+    gitleaks:
+      run: gitleaks git --staged --redact --no-banner
