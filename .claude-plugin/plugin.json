@@ -1,0 +1,10 @@
+{
+  "name": "gdrivescope",
+  "description": "Google Drive indexing, search, and download via CLI. Activate when user mentions \"Google Drive\", \"gdrive\", or \"gdrivescope\".",
+  "version": "0.2.0",
+  "author": {
+    "name": "SoftwareStartups"
+  },
+  "homepage": "https://github.com/SoftwareStartups/gdrivescope",
+  "license": "Proprietary"
+}

@@ -1,0 +1,14 @@
+{
+  "name": "softwarestartups-gdrivescope",
+  "owner": {
+    "name": "SoftwareStartups",
+    "url": "https://github.com/SoftwareStartups"
+  },
+  "plugins": [
+    {
+      "name": "gdrivescope",
+      "source": ".",
+      "description": "Google Drive indexing, search, and download via CLI. Activate when user mentions \"Google Drive\", \"gdrive\", or \"gdrivescope\"."
+    }
+  ]
+}

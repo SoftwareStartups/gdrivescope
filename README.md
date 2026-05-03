@@ -108,6 +108,17 @@ task compile
 ./dist/gdrivescope --help
 ```
 
+## Use with Claude Code
+
+This repo is a Claude Code plugin marketplace. Install the companion skill so Claude Code can drive `gdrivescope` for you:
+
+```bash
+/plugin marketplace add SoftwareStartups/gdrivescope
+/plugin install gdrivescope@softwarestartups-gdrivescope
+```
+
+Once installed, just ask Claude in plain language (e.g., "Search my Drive for the contract draft") and the skill will activate automatically. The plugin tracks this repo's releases — run `/plugin marketplace update softwarestartups-gdrivescope` to get the latest skill revisions.
+
 ## Getting started
 
 ### Step 1: Log in
