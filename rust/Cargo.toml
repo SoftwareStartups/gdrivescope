@@ -27,12 +27,26 @@ sqlite-vec = "0.1"
 bytemuck = "1"
 dirs = "5"
 
+# Phase 3 (auth): keychain vault + OAuth loopback PKCE + interactive prompt.
+# We hand-roll the loopback flow on `tokio::net::TcpListener` instead of
+# pulling in `yup-oauth2` so the on-disk Vault JSON stays byte-equivalent
+# to the TS implementation (cross-binary login interop is a Verification §4
+# requirement and yup-oauth2's TokenStorage trait would force a wrapper).
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rpassword = "7"
+open = "5"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+url = "2"
+async-trait = "0.1"
+
 # Subsequent phases will add:
-#   Phase 3 (auth):       keyring + yup-oauth2
-#   Phase 4 (drive):      google-drive3 + reqwest (rustls-tls)
+#   Phase 4 (drive):      google-drive3
 #   Phase 5 (extract):    kreuzberg (bundled-pdfium)
 #   Phase 6 (llm):        rig-core + backon
-#   Phase 7+ (misc):      toml, sha2, tracing, tracing-subscriber, rpassword, open
+#   Phase 7+ (misc):      toml, tracing, tracing-subscriber
 
 [profile.release]
 codegen-units = 1
