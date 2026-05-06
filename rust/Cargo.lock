@@ -907,6 +907,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlite-vec",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "url",

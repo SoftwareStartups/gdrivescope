@@ -83,6 +83,10 @@ impl DriveGraph {
         self.nodes.get(id)
     }
 
+    pub fn get_mut(&mut self, id: &str) -> Option<&mut Node> {
+        self.nodes.get_mut(id)
+    }
+
     pub fn nodes(&self) -> impl Iterator<Item = &Node> {
         self.nodes.values()
     }

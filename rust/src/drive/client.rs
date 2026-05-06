@@ -90,7 +90,8 @@ pub struct FilesListPage {
     pub next_page_token: Option<String>,
 }
 
-/// Drive API client.
+/// Drive API client. Cheap to clone — `reqwest::Client` is internally Arc'd.
+#[derive(Clone)]
 pub struct DriveClient {
     http: reqwest::Client,
     access_token: String,
