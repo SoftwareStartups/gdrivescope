@@ -109,4 +109,3 @@ fn matches_kind(filter: &Option<String>, mime: &str) -> bool {
         Some(other) => mime == other,
     }
 }
-

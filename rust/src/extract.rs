@@ -65,6 +65,12 @@ pub async fn extract_to_markdown(
 ) -> Result<String, CliError> {
     let cfg = kreuzberg::ExtractionConfig {
         output_format: kreuzberg::OutputFormat::Markdown,
+        // Force the pure-Rust pdf-oxide backend so we don't fall back to
+        // dynamically-loaded PDFium at runtime.
+        pdf_options: Some(kreuzberg::PdfConfig {
+            backend: kreuzberg::PdfBackend::PdfOxide,
+            ..Default::default()
+        }),
         ..Default::default()
     };
     let result = kreuzberg::extract_bytes(&bytes, mime, &cfg)

@@ -393,4 +393,3 @@ mod tests {
         assert_eq!(fmt_ms(1_500), "1.5s");
     }
 }
-

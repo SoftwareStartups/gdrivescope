@@ -49,24 +49,14 @@ async-trait = "0.1"
 # would have been net more code than the direct REST port.
 futures = "0.3"
 
-# Phase 5 (extract): native Rust Kreuzberg.
-#
-# PDF backend reality (May 2026): the plan-recommended `bundled-pdfium`
-# feature in kreuzberg 4.9 is misnamed — it's just an alias for `pdf` and
-# expects PDFium to be located at runtime via system paths. The pure-Rust
-# `pdf-oxide` backend would be ideal but kreuzberg 4.9.4 references an
-# unreleased `pdf_oxide` 0.3.37 (only 0.3.33 is on crates.io as of this
-# build). The only "true static" path is `static-pdfium` (~200 MB, rejected
-# in the plan's risk section).
-#
-# Phase 5 ships kreuzberg WITHOUT `pdf` enabled — non-PDF formats (DOCX,
-# XLSX, PPTX, HTML, XML, EML, TXT, MD) cover the vast majority of indexed
-# documents. PDF extraction returns `EXTRACT_FAILED` and the pipeline
-# records the error in `nodes.last_error`, matching how the TS WASM
-# version handled corrupt PDFs. Phase 10 (distribution) revisits — by
-# then `pdf_oxide` 0.3.37 should have shipped or we ship a side-loaded
-# PDFium dylib in the release archive.
-kreuzberg = { version = "4", default-features = false, features = ["office", "html", "xml", "email", "tokio-runtime"] }
+# Phase 5/10 (extract): native Rust Kreuzberg with the pure-Rust
+# `pdf-oxide` backend. Phase 5 originally shipped without `pdf` enabled
+# because kreuzberg 4.9.4 references `pdf_oxide = "^0.3.37"` and only
+# 0.3.33 was published at that time. Phase 10 retries — `pdf_oxide`
+# 0.3.44 is now on crates.io (released 2026-04-29) and resolves cleanly.
+# This restores PDF text-extraction without a libpdfium runtime dep
+# (pure Rust, single static binary preserved).
+kreuzberg = { version = "4", default-features = false, features = ["pdf", "pdf-oxide", "office", "html", "xml", "email", "tokio-runtime"] }
 
 # Phase 6 (LLM): hand-rolled per-provider reqwest clients. Plan called for
 # `rig-core` to unify the 4 LLM + 4 embedding providers, but the same logic
