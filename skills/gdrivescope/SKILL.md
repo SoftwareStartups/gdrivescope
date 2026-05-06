@@ -82,6 +82,10 @@ gdrivescope --json index --scope FOLDER_ID --embedding-provider voyage --rebuild
 gdrivescope --json ollama setup | jq '.data'
 ```
 
+## Roots
+
+A **root** is a Drive folder (identified by Folder ID) registered as a stable anchor point. When you `index --scope <subfolder>`, gdrivescope walks up to find the matching root and stamps `rootId` on every indexed node so paths remain consistent across runs. Roots are configured in `~/.config/gdrivescope/config.toml` and managed via `gdrivescope config add-root|remove-root|list-roots` — typically one root per logical drive area you want to index.
+
 ## Environment Variables
 
 - **Auth:** `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`
