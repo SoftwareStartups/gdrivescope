@@ -1,6 +1,17 @@
+pub mod anthropic;
+pub mod azure_openai;
+pub mod azure_openai_embedding;
+pub mod classification;
 pub mod embed_batch;
 pub mod embedding;
+pub mod env;
+pub mod ollama;
+pub mod ollama_embedding;
+pub mod openai;
+pub mod openai_embedding;
 pub mod prompts;
 pub mod provider;
 pub mod resolver;
 pub mod schema;
+pub mod summary_parse;
+pub mod voyage_embedding;

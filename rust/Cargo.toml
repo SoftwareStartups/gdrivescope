@@ -68,8 +68,17 @@ futures = "0.3"
 # PDFium dylib in the release archive.
 kreuzberg = { version = "4", default-features = false, features = ["office", "html", "xml", "email", "tokio-runtime"] }
 
+# Phase 6 (LLM): hand-rolled per-provider reqwest clients. Plan called for
+# `rig-core` to unify the 4 LLM + 4 embedding providers, but the same logic
+# that ruled out yup-oauth2 (Phase 3) and google-drive3 (Phase 4) applies:
+# rig-core owns its own builder/storage abstractions, custom request shapes
+# (Anthropic tool_use w/ cache_control, OpenAI json_schema strict, Ollama
+# `format` + retry-on-malformed, Voyage output_dimension) leak through, and
+# we'd need provider-specific shims. The 8 hand-rolled providers are
+# ~120 LOC each.
+backon = "1"
+
 # Subsequent phases will add:
-#   Phase 6 (llm):        rig-core + backon
 #   Phase 7+ (misc):      toml, tracing, tracing-subscriber
 
 [profile.release]
