@@ -1,0 +1,33 @@
+[package]
+name = "gdrivescope"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Google Drive indexing, search, and download CLI"
+license = "MIT"
+repository = "https://github.com/SoftwareStartups/gdrivescope"
+publish = false
+
+[[bin]]
+name = "gdrivescope"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "time", "sync", "signal"] }
+
+# Subsequent phases will add:
+#   Phase 2 (data layer): rusqlite (bundled) + sqlite-vec
+#   Phase 3 (auth):       keyring + yup-oauth2
+#   Phase 4 (drive):      google-drive3 + reqwest (rustls-tls)
+#   Phase 5 (extract):    kreuzberg (bundled-pdfium)
+#   Phase 6 (llm):        rig-core + backon
+#   Phase 7+ (misc):      toml, dirs, sha2, tracing, tracing-subscriber, rpassword, open
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"
