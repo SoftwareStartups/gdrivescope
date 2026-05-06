@@ -33,7 +33,7 @@ dirs = "5"
 # to the TS implementation (cross-binary login interop is a Verification §4
 # requirement and yup-oauth2's TokenStorage trait would force a wrapper).
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 rpassword = "7"
 open = "5"
 sha2 = "0.10"
@@ -42,8 +42,14 @@ rand = "0.8"
 url = "2"
 async-trait = "0.1"
 
+# Phase 4 (drive): hand-rolled reqwest calls to the 3 Drive REST endpoints
+# we use (files.list / files.get / files.export). Plan called for
+# `google-drive3`, but its huge generated surface, OpenSSL default, and
+# tight coupling to `yup-oauth2` (which we already opted out of in Phase 3)
+# would have been net more code than the direct REST port.
+futures = "0.3"
+
 # Subsequent phases will add:
-#   Phase 4 (drive):      google-drive3
 #   Phase 5 (extract):    kreuzberg (bundled-pdfium)
 #   Phase 6 (llm):        rig-core + backon
 #   Phase 7+ (misc):      toml, tracing, tracing-subscriber
