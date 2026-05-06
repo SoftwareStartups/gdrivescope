@@ -46,6 +46,29 @@ pub fn scope_required_error(required: &str) -> CliError {
     )
 }
 
+/// Verify the active vault entry was issued with sufficient scope. Mirrors
+/// `ensureScope` in `src/auth/scopes.ts`. Returns `AUTH_REQUIRED` when no
+/// vault is present, `SCOPE_REQUIRED` when scope is too narrow.
+pub async fn ensure_scope(
+    vault: &dyn crate::auth::vault::VaultStore,
+    required: &str,
+) -> Result<(), CliError> {
+    let v = vault
+        .get()
+        .await?
+        .ok_or_else(|| CliError::new("Run `gdrivescope login` first.", ErrorCode::AuthRequired))?;
+    let granted: Vec<&str> = v
+        .scope
+        .split_whitespace()
+        .filter(|s| !s.is_empty())
+        .collect();
+    if satisfies(&granted, required) {
+        Ok(())
+    } else {
+        Err(scope_required_error(required))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -79,9 +79,7 @@ kreuzberg = { version = "4", default-features = false, features = ["office", "ht
 backon = "1"
 
 tempfile = "3"
-
-# Subsequent phases will add:
-#   Phase 7+ (misc):      toml, tracing, tracing-subscriber
+toml = "0.8"
 
 [profile.release]
 codegen-units = 1
