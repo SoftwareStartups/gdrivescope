@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "gdrivescope",
-      "source": ".",
+      "source": { "source": "github", "repo": "SoftwareStartups/gdrivescope" },
       "description": "Google Drive indexing, search, and download via CLI. Activate when user mentions \"Google Drive\", \"gdrive\", or \"gdrivescope\"."
     }
   ]
