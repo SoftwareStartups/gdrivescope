@@ -51,13 +51,15 @@ cargo test                                   # Run all tests
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release
 ```
 
-The `release.yml` workflow builds 6-platform binaries on `v*` tag pushes:
-linux-x64, linux-arm64 (both `*-unknown-linux-gnu`), darwin-x64,
-darwin-arm64, windows-x64, windows-arm64. Linux runners install
+The `release.yml` workflow builds 5-platform binaries on `v*` tag pushes:
+linux-x64, linux-arm64 (both `*-unknown-linux-gnu`), darwin-arm64,
+windows-x64, windows-arm64. Intel macOS (`darwin-x64`, runner
+`macos-13`) is dropped because the runner pool has unbounded queue
+times and Apple no longer ships Intel Macs. Linux runners install
 `libdbus-1-dev` + `pkg-config` so the `keyring` crate's secret-service
 backend (transitively `libdbus-sys`) can build; resulting binaries
 dynamically link `libdbus-1.so.3`, which is preinstalled on every Linux
-desktop. The `macos-*` runners' linker emits an ad-hoc signature
+desktop. The `macos-15` runner's linker emits an ad-hoc signature
 automatically (verified by the workflow); no manual `codesign` step is
 needed for release artifacts.
 
@@ -99,7 +101,7 @@ each module.
 - **LLM providers:** hand-rolled per-provider modules — Anthropic (tool_use + cache_control), OpenAI (json_schema strict), Azure OpenAI, Ollama (`format` param + retry-on-malformed)
 - **Embedding providers:** OpenAI, Azure OpenAI, Voyage (output_dimension), Ollama
 - **Errors:** `thiserror`-based `CliError` with stable `ErrorCode` variants surfaced through the JSON envelope
-- **Release:** 6-platform GitHub Actions matrix on `v*` tags, SHA-pinned actions
+- **Release:** 5-platform GitHub Actions matrix on `v*` tags (linux-x64, linux-arm64, darwin-arm64, windows-x64, windows-arm64), SHA-pinned actions
 
 ## Testing
 

@@ -30,13 +30,6 @@ jobs:
             ext: ""
             archive: tar.gz
             install_linux_deps: true
-          - runner: macos-13
-            os: darwin
-            arch: x64
-            target: x86_64-apple-darwin
-            ext: ""
-            archive: tar.gz
-            install_linux_deps: false
           - runner: macos-15
             os: darwin
             arch: arm64

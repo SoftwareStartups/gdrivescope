@@ -42,30 +42,30 @@ If your OAuth app is in **Testing** mode, also add yourself (and any other accou
 
 ### From GitHub Releases
 
-Download a pre-compiled binary for your platform from [GitHub Releases](https://github.com/SoftwareStartups/gdrivescope/releases):
+Download a pre-compiled archive for your platform from [GitHub Releases](https://github.com/SoftwareStartups/gdrivescope/releases). Linux and macOS binaries are shipped as `.tar.gz`, Windows as `.zip`. Pick one:
 
 ```bash
 # macOS (Apple Silicon)
-curl -L https://github.com/SoftwareStartups/gdrivescope/releases/latest/download/gdrivescope-darwin-arm64 -o gdrivescope
-chmod +x gdrivescope
-sudo mv gdrivescope /usr/local/bin/
-
-# macOS (Intel)
-curl -L https://github.com/SoftwareStartups/gdrivescope/releases/latest/download/gdrivescope-darwin-x64 -o gdrivescope
+curl -L https://github.com/SoftwareStartups/gdrivescope/releases/latest/download/gdrivescope-darwin-arm64.tar.gz | tar xz
+sudo mv gdrivescope-darwin-arm64 /usr/local/bin/gdrivescope
 
 # Linux (x64)
-curl -L https://github.com/SoftwareStartups/gdrivescope/releases/latest/download/gdrivescope-linux-x64 -o gdrivescope
+curl -L https://github.com/SoftwareStartups/gdrivescope/releases/latest/download/gdrivescope-linux-x64.tar.gz | tar xz
+sudo mv gdrivescope-linux-x64 /usr/local/bin/gdrivescope
 
 # Linux (ARM64)
-curl -L https://github.com/SoftwareStartups/gdrivescope/releases/latest/download/gdrivescope-linux-arm64 -o gdrivescope
+curl -L https://github.com/SoftwareStartups/gdrivescope/releases/latest/download/gdrivescope-linux-arm64.tar.gz | tar xz
+sudo mv gdrivescope-linux-arm64 /usr/local/bin/gdrivescope
 ```
 
-Verify the download:
+Verify the download against `SHA256SUMS.txt` (also in the release):
 
 ```bash
-sha256sum gdrivescope  # compare against checksums in the release
-chmod +x gdrivescope
+curl -LO https://github.com/SoftwareStartups/gdrivescope/releases/latest/download/SHA256SUMS.txt
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing
 ```
+
+Windows binaries (`gdrivescope-windows-x64.zip`, `gdrivescope-windows-arm64.zip`) are also published. Intel macOS (`darwin-x64`) is not currently released; build from source instead.
 
 ### From source
 

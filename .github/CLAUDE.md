@@ -52,10 +52,9 @@ Applies to **every** `${{ }}` expression used inside a `run:` block — `github.
 
 - Triggers: push of `v*` tags
 - Permissions: `contents: write`, `actions: read`
-- 6-platform binary matrix:
+- 5-platform binary matrix (Intel macOS dropped — `macos-13` runner pool has unbounded queue times and Apple no longer ships Intel Macs):
   - linux-x64 → `x86_64-unknown-linux-gnu`
   - linux-arm64 → `aarch64-unknown-linux-gnu`
-  - darwin-x64 → `x86_64-apple-darwin`
   - darwin-arm64 → `aarch64-apple-darwin`
   - windows-x64 → `x86_64-pc-windows-msvc`
   - windows-arm64 → `aarch64-pc-windows-msvc`
