@@ -71,6 +71,19 @@ backon = "1"
 tempfile = "3"
 toml = "0.8"
 
+# macOS-only: keyring v3 doesn't expose an ACL parameter, so generic-password
+# entries it creates are scoped to the writing binary's codesign identity.
+# Each fresh `cargo build` produces a new ad-hoc identifier, so the OS
+# prompts on every read of an existing entry. We bypass this by writing
+# our vault entry directly via SecAccessCreate(trustedlist=NULL) +
+# SecItemAdd(kSecAttrAccess), which matches what the TS implementation did
+# via `Bun.secrets.set(..., { allowUnrestrictedAccess: true })`. See
+# `src/auth/vault.rs::macos_unrestricted`.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+security-framework-sys = "2"
+
 [profile.release]
 codegen-units = 1
 lto = "thin"
