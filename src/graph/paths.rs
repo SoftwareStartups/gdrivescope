@@ -1,13 +1,13 @@
-//! Path helpers — `node_path` and `descendants`. Ported from
-//! `src/graph/paths.ts`. Pure functions over an in-memory `DriveGraph`.
+//! Path helpers — `node_path` and `descendants`. Pure functions over an
+//! in-memory `DriveGraph`.
 
 use std::collections::HashSet;
 
 use super::model::DriveGraph;
 
-/// Build a `/`-joined path by walking `parent_id` to a root. Mirrors
-/// `nodePath` in `paths.ts` including the `<orphan>` sentinels for missing
-/// nodes and detected cycles.
+/// Build a `/`-joined path by walking `parent_id` to a root. Returns
+/// `<orphan>/<id>` for unknown ids, and prefixes `<orphan>/` when the
+/// parent chain falls outside the graph; cycle detection short-circuits.
 pub fn node_path(graph: &DriveGraph, id: &str) -> String {
     if !graph.has_node(id) {
         return format!("<orphan>/{id}");
@@ -35,7 +35,7 @@ pub fn node_path(graph: &DriveGraph, id: &str) -> String {
 }
 
 /// Set of every descendant id under `root_id` (excluding `root_id` itself).
-/// DFS over outgoing adjacency. Mirrors `descendants` in `paths.ts`.
+/// DFS over outgoing adjacency.
 pub fn descendants(graph: &DriveGraph, root_id: &str) -> HashSet<String> {
     let mut out: HashSet<String> = HashSet::new();
     if !graph.has_node(root_id) {

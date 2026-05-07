@@ -474,7 +474,7 @@ cargo build --release                        # Release build (~18 MB) at target/
 cargo fmt                                    # Format with rustfmt
 cargo fmt --check                            # Verify formatting
 cargo clippy --all-targets -- -D warnings    # Lint with clippy
-cargo test                                   # Run all tests (113 passing)
+cargo test                                   # Run all tests
 ```
 
 Cross-compile a release binary for another platform:

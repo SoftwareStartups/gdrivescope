@@ -1,12 +1,10 @@
-//! BFS folder traversal with bounded concurrency. Ported from
-//! `src/drive/traversal.ts`. Replaces the `pipeline/concurrency` semaphore
-//! with `tokio::sync::Semaphore` directly.
+//! BFS folder traversal with bounded concurrency via
+//! `tokio::sync::Semaphore`.
 //!
-//! Emits `DriveNodeInput`s through a `tokio::sync::mpsc::Sender` rather than
-//! invoking a closure per node — the channel gives natural backpressure
-//! against the pipeline's LLM/embed workers, mirrors the `await
-//! opts.onNode(...)` pause-on-handler semantics of the TS version, and
-//! avoids the boxed-future closure dance Rust would otherwise need.
+//! Emits `DriveNodeInput`s through a `tokio::sync::mpsc::Sender` rather
+//! than invoking a closure per node — the channel gives natural
+//! backpressure against the pipeline's LLM/embed workers and avoids the
+//! boxed-future closure dance Rust would otherwise need.
 
 use std::collections::{HashSet, VecDeque};
 
@@ -154,8 +152,7 @@ async fn visit_folder(
     let mut out = VisitResult::default();
     for file in entries {
         // For folder shortcuts, descend into the target id even though the
-        // emitted node keeps the shortcut's own id (matches the TS
-        // `childId = file.shortcutDetails?.targetId` step).
+        // emitted node keeps the shortcut's own id.
         let raw_mime = file.mime_type().unwrap_or_default().to_string();
         let raw_target = file.shortcut_target_id().map(String::from);
 

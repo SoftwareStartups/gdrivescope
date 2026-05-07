@@ -5,8 +5,6 @@ use crate::error::{CliError, ErrorCode};
 /// Output envelope. Serializes to:
 ///   `{"ok":true,"data":<T>}`
 ///   `{"ok":false,"error":<msg>,"code":<code>}`
-///
-/// Byte-equivalent to `ApiResponse<T>` in `src/models/api-response.ts`.
 #[derive(Debug, Clone)]
 pub enum ApiResponse<T> {
     Ok(T),
@@ -44,8 +42,7 @@ pub fn fail<T>(error: impl Into<String>, code: ErrorCode) -> ApiResponse<T> {
     }
 }
 
-/// Mirror of `toResponse(err)` in `src/utils/errors.ts`. Always returns the
-/// error variant, with a free choice of `T` (TS `ApiResponse<never>`).
+/// Wrap a `CliError` into the error variant of the envelope.
 pub fn to_response<T>(err: &CliError) -> ApiResponse<T> {
     fail(err.message.clone(), err.code)
 }
@@ -55,7 +52,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ok_envelope_matches_ts_shape() {
+    fn ok_envelope_serializes_correctly() {
         #[derive(Serialize)]
         struct Data {
             value: i32,
@@ -66,7 +63,7 @@ mod tests {
     }
 
     #[test]
-    fn err_envelope_matches_ts_shape() {
+    fn err_envelope_serializes_correctly() {
         let resp: ApiResponse<()> = fail("nope", ErrorCode::AuthRequired);
         let json = serde_json::to_string(&resp).unwrap();
         assert_eq!(

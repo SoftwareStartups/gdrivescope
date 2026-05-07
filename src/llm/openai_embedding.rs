@@ -1,4 +1,4 @@
-//! OpenAI embeddings. Ported from `src/llm/openai-embedding.ts`.
+//! OpenAI embeddings (`/v1/embeddings`).
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -6,6 +6,7 @@ use serde_json::json;
 
 use super::embed_batch::{batch_embed, validate_probe_dimensions, ProbeOptions};
 use super::embedding::EmbeddingProvider;
+use super::http::{post_json, Auth, ErrorMapping};
 use crate::error::{CliError, ErrorCode};
 
 const OPENAI_EMBEDDINGS_API: &str = "https://api.openai.com/v1/embeddings";
@@ -29,6 +30,7 @@ pub struct OpenaiEmbeddingProvider {
     model: String,
     dimensions: usize,
     explicit_dimensions: Option<usize>,
+    base_url: String,
 }
 
 pub struct OpenaiEmbeddingOptions {
@@ -39,12 +41,17 @@ pub struct OpenaiEmbeddingOptions {
 
 impl OpenaiEmbeddingProvider {
     pub fn new(opts: OpenaiEmbeddingOptions) -> Self {
+        Self::with_base_url(opts, OPENAI_EMBEDDINGS_API.to_string())
+    }
+
+    pub fn with_base_url(opts: OpenaiEmbeddingOptions, base_url: String) -> Self {
         Self {
             http: reqwest::Client::new(),
             api_key: opts.api_key,
             model: opts.model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
             dimensions: opts.dimensions.unwrap_or(DEFAULT_DIMENSIONS),
             explicit_dimensions: opts.dimensions,
+            base_url,
         }
     }
 
@@ -57,33 +64,21 @@ impl OpenaiEmbeddingProvider {
     }
 
     async fn call(&self, body: &serde_json::Value) -> Result<EmbeddingsResponse, CliError> {
-        let resp = self
-            .http
-            .post(OPENAI_EMBEDDINGS_API)
-            .bearer_auth(&self.api_key)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                CliError::new(
-                    format!("OpenAI embedding call failed: {e}"),
-                    ErrorCode::EmbedCallFailed,
-                )
-            })?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(CliError::new(
-                format!("OpenAI embedding call failed (status {status}): {text}"),
-                ErrorCode::EmbedCallFailed,
-            ));
-        }
-        resp.json().await.map_err(|e| {
-            CliError::new(
-                format!("OpenAI embedding parse failed: {e}"),
-                ErrorCode::EmbedCallFailed,
-            )
-        })
+        let map = ErrorMapping {
+            call: ErrorCode::EmbedCallFailed,
+            parse: ErrorCode::EmbedCallFailed,
+            unreachable: None,
+        };
+        post_json(
+            &self.http,
+            &self.base_url,
+            Auth::Bearer(&self.api_key),
+            &[],
+            body,
+            "OpenAI embedding",
+            &map,
+        )
+        .await
     }
 }
 
@@ -116,5 +111,55 @@ impl EmbeddingProvider for OpenaiEmbeddingProvider {
             remediation_hint:
                 "Set GDRIVESCOPE_OPENAI_EMBEDDING_DIMENSIONS or pick a different model.",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    #[tokio::test]
+    async fn happy_path_returns_vectors() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":[{"embedding":[0.1,0.2,0.3]},{"embedding":[0.4,0.5,0.6]}]}"#)
+            .create_async()
+            .await;
+        let p = OpenaiEmbeddingProvider::with_base_url(
+            OpenaiEmbeddingOptions {
+                api_key: "k".into(),
+                model: None,
+                dimensions: Some(3),
+            },
+            srv.url(),
+        );
+        let out = p.embed(&["a".into(), "b".into()]).await.unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0], vec![0.1, 0.2, 0.3]);
+    }
+
+    #[tokio::test]
+    async fn http_error_maps_to_embed_call_failed() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/")
+            .with_status(401)
+            .with_body("nope")
+            .create_async()
+            .await;
+        let p = OpenaiEmbeddingProvider::with_base_url(
+            OpenaiEmbeddingOptions {
+                api_key: "k".into(),
+                model: None,
+                dimensions: None,
+            },
+            srv.url(),
+        );
+        let err = p.embed(&["a".into()]).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::EmbedCallFailed);
     }
 }

@@ -11,7 +11,7 @@ use crate::graph::store::Store;
 use crate::llm::embedding::EmbeddingProvider;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct Hit {
     pub id: String,
     pub name: String,

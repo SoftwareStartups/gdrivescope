@@ -1,4 +1,4 @@
-//! Voyage AI embeddings. Ported from `src/llm/voyage-embedding.ts`.
+//! Voyage AI embeddings — supports `output_dimension` for matryoshka models.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -6,6 +6,7 @@ use serde_json::json;
 
 use super::embed_batch::{batch_embed, validate_probe_dimensions, ProbeOptions};
 use super::embedding::EmbeddingProvider;
+use super::http::{post_json, Auth, ErrorMapping};
 use crate::error::{CliError, ErrorCode};
 
 const VOYAGE_API: &str = "https://api.voyageai.com/v1/embeddings";
@@ -29,6 +30,7 @@ pub struct VoyageEmbeddingProvider {
     model: String,
     dimensions: usize,
     explicit_dimensions: Option<usize>,
+    base_url: String,
 }
 
 pub struct VoyageEmbeddingOptions {
@@ -39,12 +41,17 @@ pub struct VoyageEmbeddingOptions {
 
 impl VoyageEmbeddingProvider {
     pub fn new(opts: VoyageEmbeddingOptions) -> Self {
+        Self::with_base_url(opts, VOYAGE_API.to_string())
+    }
+
+    pub fn with_base_url(opts: VoyageEmbeddingOptions, base_url: String) -> Self {
         Self {
             http: reqwest::Client::new(),
             api_key: opts.api_key,
             model: opts.model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
             dimensions: opts.dimensions.unwrap_or(DEFAULT_DIMENSIONS),
             explicit_dimensions: opts.dimensions,
+            base_url,
         }
     }
 
@@ -57,36 +64,21 @@ impl VoyageEmbeddingProvider {
     }
 
     async fn call(&self, body: &serde_json::Value) -> Result<VoyageResponse, CliError> {
-        let resp = self
-            .http
-            .post(VOYAGE_API)
-            .bearer_auth(&self.api_key)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                CliError::new(
-                    format!("Voyage embedding call failed: {e}"),
-                    ErrorCode::EmbedCallFailed,
-                )
-            })?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            if std::env::var("DEBUG").is_ok() {
-                eprintln!("[debug] Voyage API response: {text}");
-            }
-            return Err(CliError::new(
-                format!("Voyage embedding failed (HTTP {status}). Run with DEBUG=1 for details."),
-                ErrorCode::EmbedCallFailed,
-            ));
-        }
-        resp.json().await.map_err(|e| {
-            CliError::new(
-                format!("Voyage embedding parse failed: {e}"),
-                ErrorCode::EmbedCallFailed,
-            )
-        })
+        let map = ErrorMapping {
+            call: ErrorCode::EmbedCallFailed,
+            parse: ErrorCode::EmbedCallFailed,
+            unreachable: None,
+        };
+        post_json(
+            &self.http,
+            &self.base_url,
+            Auth::Bearer(&self.api_key),
+            &[],
+            body,
+            "Voyage embedding",
+            &map,
+        )
+        .await
     }
 }
 
@@ -119,5 +111,54 @@ impl EmbeddingProvider for VoyageEmbeddingProvider {
             remediation_hint:
                 "Set GDRIVESCOPE_VOYAGE_EMBEDDING_DIMENSIONS or pick a different model.",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    #[tokio::test]
+    async fn happy_path_returns_vectors() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":[{"embedding":[0.5,0.5]}]}"#)
+            .create_async()
+            .await;
+        let p = VoyageEmbeddingProvider::with_base_url(
+            VoyageEmbeddingOptions {
+                api_key: "k".into(),
+                model: None,
+                dimensions: Some(2),
+            },
+            srv.url(),
+        );
+        let out = p.embed(&["a".into()]).await.unwrap();
+        assert_eq!(out, vec![vec![0.5, 0.5]]);
+    }
+
+    #[tokio::test]
+    async fn http_error_maps_to_embed_call_failed() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/")
+            .with_status(429)
+            .with_body("rate limited")
+            .create_async()
+            .await;
+        let p = VoyageEmbeddingProvider::with_base_url(
+            VoyageEmbeddingOptions {
+                api_key: "k".into(),
+                model: None,
+                dimensions: None,
+            },
+            srv.url(),
+        );
+        let err = p.embed(&["a".into()]).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::EmbedCallFailed);
     }
 }

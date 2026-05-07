@@ -22,7 +22,7 @@ pub struct ListArgs {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct Entry {
     id: String,
     name: String,
@@ -32,7 +32,7 @@ struct Entry {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct ListData {
     entries: Vec<Entry>,
     total: usize,

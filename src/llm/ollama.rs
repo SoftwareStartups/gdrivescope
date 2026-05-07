@@ -1,12 +1,13 @@
-//! Ollama chat API. Ported from `src/llm/ollama.ts`.
-//! Uses Ollama's `format` parameter for JSON-schema-constrained output.
-//! Two-attempt retry on malformed JSON; second attempt adds a stricter
-//! system note. Surfaces unreachable host as PROVIDER_UNAVAILABLE.
+//! Ollama chat. Uses Ollama's `format` parameter for JSON-schema-
+//! constrained output. Two-attempt retry on malformed JSON; second attempt
+//! adds a stricter system note. Surfaces unreachable host as
+//! `PROVIDER_UNAVAILABLE`.
 
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::http::{post_json, Auth, ErrorMapping};
 use super::prompts::{summary_user, SUMMARY_SYSTEM};
 use super::provider::{LlmProvider, LlmSummarizeInput, LlmSummary};
 use super::schema::llm_summary_schema;
@@ -39,6 +40,20 @@ impl OllamaProvider {
         }
     }
 
+    fn err_map(&self) -> ErrorMapping {
+        ErrorMapping {
+            call: ErrorCode::LlmCallFailed,
+            parse: ErrorCode::LlmMalformedOutput,
+            unreachable: Some((
+                ErrorCode::ProviderUnavailable,
+                format!(
+                    "Ollama is not reachable at {}. Run `ollama serve` or `gdrivescope ollama setup`.",
+                    self.host,
+                ),
+            )),
+        }
+    }
+
     async fn call(&self, messages: &serde_json::Value) -> Result<OllamaChatResponse, CliError> {
         let url = format!("{}/api/chat", self.host);
         let body = json!({
@@ -47,39 +62,16 @@ impl OllamaProvider {
             "format": llm_summary_schema(),
             "messages": messages,
         });
-        let resp = self
-            .http
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() || e.is_timeout() {
-                    CliError::new(
-                        format!(
-                            "Ollama is not reachable at {}. Run `ollama serve` or `gdrivescope ollama setup`.",
-                            self.host,
-                        ),
-                        ErrorCode::ProviderUnavailable,
-                    )
-                } else {
-                    CliError::new(format!("Ollama call failed: {e}"), ErrorCode::LlmCallFailed)
-                }
-            })?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(CliError::new(
-                format!("Ollama {status}: {text}"),
-                ErrorCode::LlmCallFailed,
-            ));
-        }
-        resp.json().await.map_err(|e| {
-            CliError::new(
-                format!("Ollama parse failed: {e}"),
-                ErrorCode::LlmMalformedOutput,
-            )
-        })
+        post_json(
+            &self.http,
+            &url,
+            Auth::None,
+            &[],
+            &body,
+            "Ollama",
+            &self.err_map(),
+        )
+        .await
     }
 }
 
@@ -128,5 +120,60 @@ impl LlmProvider for OllamaProvider {
                 ErrorCode::LlmMalformedOutput,
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    fn input() -> LlmSummarizeInput {
+        LlmSummarizeInput {
+            markdown: "doc".into(),
+            filename: "f".into(),
+            path: "p".into(),
+            mime_type: "text/plain".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn happy_path_parses_message_content() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/api/chat")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"message":{"content":"{\"summary\":\"S\",\"classification\":\"other\",\"key_topics\":[\"t\"]}"}}"#,
+            )
+            .create_async()
+            .await;
+        let p = OllamaProvider::new(srv.url(), "llama3");
+        let out = p.summarize(&input()).await.unwrap();
+        assert_eq!(out.summary, "S");
+    }
+
+    #[tokio::test]
+    async fn http_500_maps_to_llm_call_failed() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/api/chat")
+            .with_status(500)
+            .with_body("boom")
+            .expect_at_least(1)
+            .create_async()
+            .await;
+        let p = OllamaProvider::new(srv.url(), "llama3");
+        let err = p.summarize(&input()).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::LlmCallFailed);
+    }
+
+    #[tokio::test]
+    async fn unreachable_host_maps_to_provider_unavailable() {
+        let p = OllamaProvider::new("http://127.0.0.1:1", "llama3");
+        let err = p.summarize(&input()).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::ProviderUnavailable);
+        assert!(err.message.contains("not reachable"));
     }
 }

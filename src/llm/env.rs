@@ -1,5 +1,4 @@
-//! Environment-variable helpers + provider-name enums. Ported from
-//! `src/llm/env.ts`.
+//! Environment-variable helpers + provider-name enums.
 
 use crate::error::{CliError, ErrorCode};
 

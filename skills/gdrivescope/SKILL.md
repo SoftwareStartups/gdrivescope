@@ -39,20 +39,20 @@ gdrivescope --json search "quarterly revenue" --scope FOLDER_ID --limit 5 \
 
 # 3. Show a single hit in detail
 gdrivescope --json show FILE_ID \
-  | jq '.data | {name: .node.name, path, summary: .node.summary, keyTopics: .node.keyTopics}'
+  | jq '.data | {name: .node.name, path, summary: .node.summary, key_topics: .node.key_topics}'
 ```
 
 ## Common Patterns
 
 ```bash
 # List a folder tree
-gdrivescope --json list FOLDER_ID -r | jq '.data.files[] | {id, name, mimeType}'
+gdrivescope --json list FOLDER_ID -r | jq '.data.files[] | {id, name, mime_type}'
 
 # List only folders (or only files / shortcuts / other)
 gdrivescope --json list FOLDER_ID -r --type folder | jq '.data.files[] | {id, name}'
 
 # Download a file to disk
-gdrivescope --json download FILE_ID -o ./report.pdf | jq '.data | {outputPath, bytes}'
+gdrivescope --json download FILE_ID -o ./report.pdf | jq '.data | {output_path, bytes}'
 
 # Metadata-only index (fast, no LLM cost)
 gdrivescope --json index --scope FOLDER_ID --metadata-only | jq '.data'
@@ -84,7 +84,7 @@ gdrivescope --json ollama setup | jq '.data'
 
 ## Roots
 
-A **root** is a Drive folder (identified by Folder ID) registered as a stable anchor point. When you `index --scope <subfolder>`, gdrivescope walks up to find the matching root and stamps `rootId` on every indexed node so paths remain consistent across runs. Roots are configured in `~/.config/gdrivescope/config.toml` and managed via `gdrivescope config add-root|remove-root|list-roots` — typically one root per logical drive area you want to index.
+A **root** is a Drive folder (identified by Folder ID) registered as a stable anchor point. When you `index --scope <subfolder>`, gdrivescope walks up to find the matching root and stamps `root_id` on every indexed node so paths remain consistent across runs. Roots are configured in `~/.config/gdrivescope/config.toml` and managed via `gdrivescope config add-root|remove-root|list-roots` — typically one root per logical drive area you want to index.
 
 ## Environment Variables
 

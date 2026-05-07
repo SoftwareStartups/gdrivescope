@@ -26,20 +26,20 @@ pub enum ConfigCmd {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct ShowOk {
     config_path: String,
     config: WorkspaceConfig,
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct RootsOk {
     roots: Vec<ConfigRoot>,
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct ChangedOk {
     config_path: String,
     changed: bool,

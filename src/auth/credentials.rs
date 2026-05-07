@@ -1,10 +1,9 @@
-//! OAuth client credential resolver. Ported from `src/auth/credentials.ts`.
+//! OAuth client credential resolver.
 //!
-//! Cascade per field (clientId, clientSecret):
+//! Cascade per field (`client_id`, `client_secret`):
 //!     command-line flag → environment variable → keyring vault → interactive prompt.
 //!
-//! Same env var names as the TS code: `GOOGLE_OAUTH_CLIENT_ID` /
-//! `GOOGLE_OAUTH_CLIENT_SECRET`.
+//! Env vars: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.
 
 use crate::auth::oauth::OAuthCredentials;
 use crate::auth::vault::{sanitize_credential, VaultStore};
@@ -96,7 +95,7 @@ async fn resolve_field(
         )
     })?;
     sanitize_credential(&raw).map_err(|e| {
-        // Mirror TS: re-tag the cause to mention which field went bad.
+        // Re-tag the cause to mention which field went bad.
         CliError::new(
             format!("Invalid {env_var}: {}", e.message),
             ErrorCode::AuthFailed,
@@ -108,7 +107,7 @@ async fn resolve_field(
 mod tests {
     use super::*;
     use crate::auth::vault::Vault;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
 
     #[derive(Default)]
     struct MemoryVault(Mutex<Option<Vault>>);
@@ -116,14 +115,14 @@ mod tests {
     #[async_trait::async_trait]
     impl VaultStore for MemoryVault {
         async fn get(&self) -> Result<Option<Vault>, CliError> {
-            Ok(self.0.lock().unwrap().clone())
+            Ok(self.0.lock().await.clone())
         }
         async fn set(&self, v: &Vault) -> Result<(), CliError> {
-            *self.0.lock().unwrap() = Some(v.clone());
+            *self.0.lock().await = Some(v.clone());
             Ok(())
         }
         async fn clear(&self) -> Result<bool, CliError> {
-            let mut g = self.0.lock().unwrap();
+            let mut g = self.0.lock().await;
             let was = g.is_some();
             *g = None;
             Ok(was)

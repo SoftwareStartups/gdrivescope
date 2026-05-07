@@ -1,7 +1,6 @@
-//! SQLite + sqlite-vec store. Replaces `src/graph/store.ts` AND
-//! `src/graph/sqlite-native.ts`. The TS `setCustomSQLite()` dance disappears
-//! because `rusqlite` with the `bundled` feature statically links a
-//! known-good SQLite that supports loadable extensions.
+//! SQLite + sqlite-vec store. `rusqlite` with the `bundled` feature
+//! statically links a known-good SQLite that supports loadable extensions
+//! — no system libsqlite3 dylib required.
 //!
 //! sqlite-vec is registered once via `sqlite3_auto_extension` so every
 //! subsequent `Connection::open*` picks it up automatically.
@@ -15,10 +14,8 @@ use serde::{Deserialize, Serialize};
 use super::model::{DriveNodeInput, Node};
 use crate::error::{CliError, ErrorCode};
 
-pub const SCHEMA_VERSION: &str = "3";
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RootSummary {
     pub root_id: Option<String>,
     pub count: i64,
@@ -34,7 +31,7 @@ pub struct SummaryUpdate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct NodeNameSearchRow {
     pub id: String,
     pub name: String,
@@ -100,39 +97,6 @@ impl Store {
         self.conn
             .execute_batch(SCHEMA_DDL)
             .map_err(map_err("init schema"))?;
-        // Compatibility migrations (matches TS `hasColumn` flow).
-        self.add_column_if_missing("nodes", "root_id", "TEXT")?;
-        self.add_column_if_missing("nodes", "last_error", "TEXT")?;
-        self.add_column_if_missing("nodes", "last_embedded_hash", "TEXT")?;
-        // Stamp current schema version.
-        let existing = self.get_meta("schema_version")?;
-        if existing.as_deref() != Some(SCHEMA_VERSION) {
-            self.set_meta("schema_version", SCHEMA_VERSION)?;
-        }
-        Ok(())
-    }
-
-    fn add_column_if_missing(&self, table: &str, column: &str, ty: &str) -> Result<(), CliError> {
-        if !KNOWN_TABLES.contains(&table) {
-            return Err(CliError::new(
-                format!("add_column_if_missing: unknown table \"{table}\""),
-                ErrorCode::Unknown,
-            ));
-        }
-        let mut stmt = self
-            .conn
-            .prepare(&format!("PRAGMA table_info({table})"))
-            .map_err(map_err("PRAGMA table_info prepare"))?;
-        let names: Vec<String> = stmt
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(map_err("PRAGMA table_info query"))?
-            .collect::<Result<_, _>>()
-            .map_err(map_err("PRAGMA table_info collect"))?;
-        if !names.iter().any(|n| n == column) {
-            self.conn
-                .execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"), [])
-                .map_err(map_err("ALTER TABLE"))?;
-        }
         Ok(())
     }
 
@@ -538,8 +502,6 @@ impl Store {
 
 // --- internal helpers --------------------------------------------------------
 
-const KNOWN_TABLES: &[&str] = &["nodes", "meta", "embeddings"];
-
 const SCHEMA_DDL: &str = r#"
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS meta (
@@ -547,23 +509,24 @@ CREATE TABLE IF NOT EXISTS meta (
   v TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS nodes (
-  id             TEXT PRIMARY KEY,
-  parent_id      TEXT,
-  name           TEXT NOT NULL,
-  mime_type      TEXT NOT NULL,
-  size           INTEGER,
-  modified_time  TEXT,
-  created_time   TEXT,
-  web_view_link  TEXT,
-  root_id        TEXT,
-  metadata_json  TEXT NOT NULL,
-  summary        TEXT,
-  classification TEXT,
-  key_topics     TEXT,
-  extracted_md   TEXT,
-  content_hash   TEXT,
-  last_indexed   TEXT,
-  last_error     TEXT
+  id                 TEXT PRIMARY KEY,
+  parent_id          TEXT,
+  name               TEXT NOT NULL,
+  mime_type          TEXT NOT NULL,
+  size               INTEGER,
+  modified_time      TEXT,
+  created_time       TEXT,
+  web_view_link      TEXT,
+  root_id            TEXT,
+  metadata_json      TEXT NOT NULL,
+  summary            TEXT,
+  classification     TEXT,
+  key_topics         TEXT,
+  extracted_md       TEXT,
+  content_hash       TEXT,
+  last_embedded_hash TEXT,
+  last_indexed       TEXT,
+  last_error         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_name   ON nodes(name);
@@ -671,13 +634,8 @@ mod tests {
     }
 
     #[test]
-    fn schema_initializes_and_stamps_version() {
+    fn schema_initializes_with_expected_columns() {
         let s = Store::open_in_memory().unwrap();
-        assert_eq!(
-            s.get_meta("schema_version").unwrap().as_deref(),
-            Some(SCHEMA_VERSION)
-        );
-        // Ensure all expected columns exist on `nodes`.
         let cols: Vec<String> = s
             .conn()
             .prepare("PRAGMA table_info(nodes)")
@@ -923,12 +881,5 @@ mod tests {
         assert!(s.has_vector_table().unwrap());
         s.clear_embeddings().unwrap();
         assert!(!s.has_vector_table().unwrap());
-    }
-
-    #[test]
-    fn add_column_if_missing_rejects_unknown_table() {
-        let s = Store::open_in_memory().unwrap();
-        let err = s.add_column_if_missing("nope", "x", "TEXT").unwrap_err();
-        assert!(err.message.contains("nope"));
     }
 }

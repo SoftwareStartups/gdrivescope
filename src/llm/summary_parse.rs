@@ -1,6 +1,5 @@
-//! Validate a raw provider response into an `LlmSummary`. Ported from
-//! `src/llm/summary-parse.ts` — same lenient mapping (unknown classification
-//! falls back to "other"; missing key_topics → empty list).
+//! Validate a raw provider response into an `LlmSummary`. Lenient:
+//! unknown classification → `Other`; missing `key_topics` → empty list.
 
 use super::classification::Classification;
 use super::provider::LlmSummary;

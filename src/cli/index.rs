@@ -56,13 +56,12 @@ pub struct IndexArgs {
     #[arg(long = "max-size")]
     pub max_size: Option<u64>,
     /// Slice PDFs to first N pages before extraction (default 10).
-    /// Note: not yet enforced — see Phase 5 deferral.
     #[arg(long = "max-pdf-pages")]
     pub max_pdf_pages: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct RunResult {
     root_id: String,
     root_label: String,
@@ -86,7 +85,7 @@ struct RunResult {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct IndexData {
     runs: Vec<RunResult>,
 }

@@ -45,7 +45,7 @@ cargo build --release                        # Optimized release build at target
 cargo fmt                                    # Format with rustfmt
 cargo fmt --check                            # Verify formatting (CI gate)
 cargo clippy --all-targets -- -D warnings    # Lint with clippy (CI gate)
-cargo test                                   # Run all tests (113 unit tests)
+cargo test                                   # Run all tests
 
 # Local CI equivalent
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release
@@ -77,17 +77,17 @@ src/
   pipeline/          Index orchestration, bounded concurrency, pruning
   cli/               clap-derive Cli + per-command implementations (login, logout,
                      index, list, show, search, download, config, ollama)
-tests/
-  (reserved for future integration tests against recorded Drive fixtures;
-   unit tests live inline in `#[cfg(test)] mod tests` blocks per module)
 ```
+
+Unit tests live inline as `#[cfg(test)] mod tests { ... }` blocks within
+each module.
 
 ## Conventions
 
 - **Runtime:** Rust 2021 edition, MSRV 1.85 (pinned in `rust-toolchain.toml`)
 - **Async:** tokio multi-thread runtime; bounded concurrency via `Arc<tokio::sync::Semaphore>`
 - **CLI parsing:** `clap` with the `derive` feature; noun-verb dispatch via `Cmd` enum
-- **Credentials:** `keyring` crate (apple-native, windows-native, sync-secret-service); vault JSON layout is byte-equivalent to the previous TS implementation so login state is portable across binaries
+- **Credentials:** `keyring` crate (apple-native, windows-native, sync-secret-service); vault entries persisted as snake_case JSON under one keyring item
 - **Output:** human-readable default; `--json` flag emits `{ok, data}` / `{ok, error, code}` envelope
 - **Persistence:** single `~/.config/gdrivescope/drive.db` via `rusqlite` (bundled SQLite) + `sqlite-vec` virtual table — no system libsqlite3 dependency
 - **Document extraction:** `kreuzberg` crate with the `pdf-oxide` feature — pure-Rust PDF extraction, no libpdfium runtime dependency
@@ -99,7 +99,7 @@ tests/
 
 ## Testing
 
-113 unit tests live inline as `#[cfg(test)] mod tests { ... }` blocks within each module. Provider integration uses fakes — no live API calls during tests. Run all tests with `cargo test`. The repo-root `tests/` directory is reserved for future cargo integration tests (e.g. compiled binary against recorded Drive fixtures).
+Unit tests live inline in `#[cfg(test)] mod tests { ... }` blocks per module. HTTP-using providers are exercised via `mockito`; no live API calls during tests. Run all tests with `cargo test`.
 
 ## See also
 

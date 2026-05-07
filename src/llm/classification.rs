@@ -1,4 +1,5 @@
-//! Classification enum + value list. Ported from `src/llm/classification.ts`.
+//! Document-classification enum with 11 variants. Unknown values map to
+//! `Other` so a provider drift doesn't crash indexing.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,7 +46,7 @@ impl Classification {
             "strategy" => Self::Strategy,
             "hr" => Self::Hr,
             "research" => Self::Research,
-            // Match TS: unknown values fall back to "other" rather than err.
+            // Unknown values map to Other rather than erroring.
             _ => Self::Other,
         }
     }
@@ -80,7 +81,7 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_through_serde() {
+    fn serialization_matches_classification_values_constant() {
         for raw in CLASSIFICATION_VALUES {
             let v = Classification::from_str_lossy(raw);
             let json = serde_json::to_string(&v).unwrap();

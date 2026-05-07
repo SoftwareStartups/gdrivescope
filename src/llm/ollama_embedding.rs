@@ -1,5 +1,5 @@
-//! Ollama embeddings. Ported from `src/llm/ollama-embedding.ts`.
-//! Calls /api/embed with explicit dimensions configured by the caller.
+//! Ollama embeddings (`/api/embed`). Caller supplies the expected
+//! dimensions so the probe step can validate model output size.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -7,6 +7,7 @@ use serde_json::json;
 
 use super::embed_batch::{batch_embed, validate_probe_dimensions, ProbeOptions};
 use super::embedding::EmbeddingProvider;
+use super::http::{post_json, Auth, ErrorMapping};
 use crate::error::{CliError, ErrorCode};
 
 const BATCH: usize = 64;
@@ -49,42 +50,32 @@ impl OllamaEmbeddingProvider {
         provider.probe().await
     }
 
+    fn err_map(&self) -> ErrorMapping {
+        ErrorMapping {
+            call: ErrorCode::EmbedCallFailed,
+            parse: ErrorCode::EmbedCallFailed,
+            unreachable: Some((
+                ErrorCode::ProviderUnavailable,
+                format!(
+                    "Ollama is not reachable at {}. Run `ollama serve` or `gdrivescope ollama setup`.",
+                    self.host,
+                ),
+            )),
+        }
+    }
+
     async fn call(&self, input: &serde_json::Value) -> Result<Vec<Vec<f32>>, CliError> {
         let body = json!({ "model": &self.model, "input": input });
-        let resp = self
-            .http
-            .post(format!("{}/api/embed", self.host))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() || e.is_timeout() {
-                    CliError::new(
-                        format!(
-                            "Ollama is not reachable at {}. Run `ollama serve` or `gdrivescope ollama setup`.",
-                            self.host,
-                        ),
-                        ErrorCode::ProviderUnavailable,
-                    )
-                } else {
-                    CliError::new(
-                        format!("Ollama embedding call failed: {e}"),
-                        ErrorCode::EmbedCallFailed,
-                    )
-                }
-            })?;
-        if !resp.status().is_success() {
-            return Err(CliError::new(
-                format!("Ollama /api/embed returned {}", resp.status()),
-                ErrorCode::EmbedCallFailed,
-            ));
-        }
-        let parsed: OllamaEmbedResponse = resp.json().await.map_err(|e| {
-            CliError::new(
-                format!("Ollama embedding parse failed: {e}"),
-                ErrorCode::EmbedCallFailed,
-            )
-        })?;
+        let parsed: OllamaEmbedResponse = post_json(
+            &self.http,
+            &format!("{}/api/embed", self.host),
+            Auth::None,
+            &[],
+            &body,
+            "Ollama embedding",
+            &self.err_map(),
+        )
+        .await?;
         Ok(parsed.embeddings.unwrap_or_default())
     }
 }
@@ -114,5 +105,41 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
             model: &self.model,
             remediation_hint: "Run `gdrivescope ollama setup` to reconcile.",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    #[tokio::test]
+    async fn happy_path_returns_vectors() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/api/embed")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"embeddings":[[0.1,0.2,0.3]]}"#)
+            .create_async()
+            .await;
+        let p = OllamaEmbeddingProvider::new(OllamaEmbeddingOptions {
+            host: srv.url(),
+            model: "nomic".into(),
+            dimensions: 3,
+        });
+        let out = p.embed(&["a".into()]).await.unwrap();
+        assert_eq!(out, vec![vec![0.1, 0.2, 0.3]]);
+    }
+
+    #[tokio::test]
+    async fn unreachable_host_maps_to_provider_unavailable() {
+        let p = OllamaEmbeddingProvider::new(OllamaEmbeddingOptions {
+            host: "http://127.0.0.1:1".into(),
+            model: "nomic".into(),
+            dimensions: 3,
+        });
+        let err = p.embed(&["a".into()]).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::ProviderUnavailable);
     }
 }

@@ -1,5 +1,4 @@
-//! Cross-cutting helpers — config-path resolution, etc. Phase 7+ will add
-//! logging and prompt helpers.
+//! Filesystem path helpers.
 
 use std::path::PathBuf;
 
@@ -9,7 +8,7 @@ const APP_DIR: &str = "gdrivescope";
 
 /// `~/.config/gdrivescope/` (XDG `$XDG_CONFIG_HOME/gdrivescope` on Linux,
 /// `~/Library/Application Support/gdrivescope` on macOS, `%APPDATA%\\gdrivescope`
-/// on Windows). Mirrors `getConfigDir()` in `src/utils/paths.ts`.
+/// on Windows).
 pub fn config_dir() -> Result<PathBuf, CliError> {
     let base = dirs::config_dir().ok_or_else(|| {
         CliError::new(

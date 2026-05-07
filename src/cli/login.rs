@@ -23,7 +23,7 @@ pub struct LoginArgs {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct LoginOk {
     scope: String,
     obtained_at: i64,

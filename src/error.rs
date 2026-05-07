@@ -2,15 +2,12 @@ use serde::{Serialize, Serializer};
 use thiserror::Error;
 
 /// Stable error code surface emitted in `{ok:false, error, code}` envelopes.
-/// Mirrors `ErrorCode` in `src/utils/errors.ts` byte-for-byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorCode {
     AuthRequired,
     AuthFailed,
     Usage,
     UnknownCommand,
-    NotImplemented,
-    NotYetImplemented,
     MissingArg,
     BadArg,
     NodeNotFound,
@@ -38,8 +35,6 @@ impl ErrorCode {
             Self::AuthFailed => "AUTH_FAILED",
             Self::Usage => "USAGE",
             Self::UnknownCommand => "UNKNOWN_COMMAND",
-            Self::NotImplemented => "NOT_IMPLEMENTED",
-            Self::NotYetImplemented => "NOT_YET_IMPLEMENTED",
             Self::MissingArg => "MISSING_ARG",
             Self::BadArg => "BAD_ARG",
             Self::NodeNotFound => "NODE_NOT_FOUND",
@@ -74,7 +69,7 @@ impl Serialize for ErrorCode {
     }
 }
 
-/// Top-level CLI error. Replaces `CliError` from `src/utils/errors.ts`.
+/// Top-level CLI error.
 #[derive(Debug, Error)]
 #[error("{message}")]
 pub struct CliError {
@@ -92,7 +87,6 @@ impl CliError {
 }
 
 /// Wrap an arbitrary error into a `CliError` with `Unknown` code.
-/// Mirrors the `unknown` fallback in TS `toResponse(err)`.
 pub fn wrap_unknown(err: impl std::fmt::Display) -> CliError {
     CliError::new(err.to_string(), ErrorCode::Unknown)
 }
@@ -101,17 +95,13 @@ pub fn wrap_unknown(err: impl std::fmt::Display) -> CliError {
 mod tests {
     use super::*;
 
-    /// Each variant must serialize to the exact TS string. Drift would break
-    /// cross-binary `--json` envelopes consumers parse against.
     #[test]
-    fn error_code_strings_match_ts_union() {
+    fn error_code_string_round_trip() {
         let cases: &[(ErrorCode, &str)] = &[
             (ErrorCode::AuthRequired, "AUTH_REQUIRED"),
             (ErrorCode::AuthFailed, "AUTH_FAILED"),
             (ErrorCode::Usage, "USAGE"),
             (ErrorCode::UnknownCommand, "UNKNOWN_COMMAND"),
-            (ErrorCode::NotImplemented, "NOT_IMPLEMENTED"),
-            (ErrorCode::NotYetImplemented, "NOT_YET_IMPLEMENTED"),
             (ErrorCode::MissingArg, "MISSING_ARG"),
             (ErrorCode::BadArg, "BAD_ARG"),
             (ErrorCode::NodeNotFound, "NODE_NOT_FOUND"),

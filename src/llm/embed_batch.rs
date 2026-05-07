@@ -1,5 +1,4 @@
 //! Batched-embedding helper + dimension probe validator + retry wrapper.
-//! Ported from `src/llm/embed-batch.ts`.
 
 use std::future::Future;
 use std::time::Duration;
@@ -8,10 +7,10 @@ use backon::{ExponentialBuilder, Retryable};
 
 use crate::error::{CliError, ErrorCode};
 
-/// Mirror of TS `withBackoff`: retries transient failures with exponential
-/// backoff + jitter on the first 3 attempts. We treat *any* CliError as
-/// retriable here because the per-provider impls already classify
-/// permanent errors (rate-limit codes, 429/503/529) before throwing.
+/// Retry transient failures with exponential backoff + jitter for up to
+/// 3 attempts. Any `CliError` is treated as retriable because per-provider
+/// impls already classify permanent errors (rate-limit codes, 429/503/529)
+/// upstream.
 pub async fn with_backoff<F, Fut, T>(op: F) -> Result<T, CliError>
 where
     F: FnMut() -> Fut,

@@ -1,4 +1,4 @@
-//! `EmbeddingProvider` trait. Ported from `src/llm/embedding-provider.ts`.
+//! `EmbeddingProvider` trait — batched embeddings + dimension probe.
 
 use async_trait::async_trait;
 

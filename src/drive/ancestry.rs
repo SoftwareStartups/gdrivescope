@@ -1,7 +1,7 @@
 //! Walk parents up from a scope folder until we hit a configured root.
-//! Direct port of `src/drive/ancestry.ts`. Same constants
-//! (`MAX_ANCESTOR_HOPS = 50`, `MY_DRIVE_SENTINEL = "root"`), same
-//! `usedFallback` semantics.
+//! Caps the parent walk at `MAX_ANCESTOR_HOPS = 50`, treats `"root"` as a
+//! sentinel for "the user's My Drive", and surfaces a `used_fallback` flag
+//! when the scope wasn't reachable from any configured root.
 
 use std::collections::HashSet;
 
@@ -189,8 +189,6 @@ fn scope_node_with_label(
     node
 }
 
-// Pure-function tests live here; HTTP-driven tests are deferred to Phase 7
-// pipeline integration tests against a recorded fixture.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,7 +196,6 @@ mod tests {
     #[test]
     fn resolved_ancestry_chain_excludes_scope() {
         // Sanity-check shape only — exercising HTTP requires a server.
-        // Real ancestry behaviour is asserted via Phase 7 fixture tests.
         let scope_node = DriveNodeInput {
             id: "s".into(),
             parent_id: Some("p".into()),

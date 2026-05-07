@@ -1,11 +1,10 @@
-//! OAuth 2.0 + PKCE loopback flow against Google Drive. Ported from
-//! `src/auth/oauth.ts`. The ~210 LOC TS port becomes ~150 LOC Rust.
+//! OAuth 2.0 + PKCE loopback flow against Google.
 //!
-//! Plan calls for `yup-oauth2::InstalledFlowAuthenticator` here, but that
-//! crate owns its own `TokenStorage` shape and routing the values back into
-//! our byte-compatible `Vault` would be net more code than hand-rolling the
-//! flow. We keep the loopback server tiny (`tokio::net::TcpListener` +
-//! manual single-read HTTP parse) and use `reqwest` for the token POST.
+//! The loopback server is tiny: `tokio::net::TcpListener` accepts the
+//! single-shot redirect from the user's browser, parses one HTTP request
+//! by hand, and hands the authorization code to `reqwest` for the token
+//! POST. No yup-oauth2 dependency — its `TokenStorage` trait would force a
+//! wrapper around our `Vault` that's bigger than this whole module.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -31,7 +30,7 @@ pub struct OAuthCredentials {
 pub struct AuthResult {
     pub refresh_token: String,
     pub access_token: String,
-    /// Milliseconds since UNIX epoch (matches TS `Date.now() + expires_in*1000`).
+    /// Milliseconds since UNIX epoch.
     pub expires_at: i64,
     pub scope: String,
 }
@@ -228,7 +227,7 @@ async fn await_callback(listener: &TcpListener, expected_state: &str) -> Result<
         }
 
         if let Some(err) = error {
-            // Sanitize per TS — keep first 64 chars, replace non-word/dash/underscore.
+            // Sanitize: keep first 64 chars, replace non-word/dash/underscore.
             let safe: String = err
                 .chars()
                 .take(64)

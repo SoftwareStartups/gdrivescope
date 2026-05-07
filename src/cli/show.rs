@@ -16,7 +16,7 @@ pub struct ShowArgs {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct ShowData {
     #[serde(flatten)]
     node: Node,

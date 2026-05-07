@@ -6,7 +6,7 @@ use crate::formatters::emit;
 use crate::models::{success, ApiResponse};
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct LogoutOk {
     cleared: bool,
 }

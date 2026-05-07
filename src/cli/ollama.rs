@@ -23,7 +23,7 @@ pub enum OllamaCmd {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct SetupOk {
     host: String,
     llm_model: String,

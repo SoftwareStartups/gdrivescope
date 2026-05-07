@@ -1,13 +1,13 @@
-//! `LLM_SUMMARY_SCHEMA` JSON. Ported from `src/llm/summary-schema.ts`.
+//! `LLM_SUMMARY_SCHEMA` JSON.
 
 use serde_json::{json, Value};
 
 use super::classification::CLASSIFICATION_VALUES;
 
 /// Schema fed to providers as Anthropic tool input_schema, OpenAI/Azure
-/// `response_format.json_schema`, or Ollama `format`. Same shape as the TS
-/// constant — `{summary, classification, key_topics}` with the
-/// classification enum and 1–10 key_topics constraint.
+/// `response_format.json_schema`, or Ollama `format`. Shape is
+/// `{summary, classification, key_topics}` with the classification enum
+/// and a 1–10 key_topics constraint.
 pub fn llm_summary_schema() -> Value {
     json!({
         "type": "object",
@@ -31,7 +31,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_required_fields_match_ts() {
+    fn schema_lists_required_fields() {
         let s = llm_summary_schema();
         let req: Vec<&str> = s["required"]
             .as_array()

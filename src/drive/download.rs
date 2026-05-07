@@ -1,6 +1,6 @@
-//! Download a Drive file to disk. Ported from `src/drive/download.ts`.
-//! Handles both export-to-Office (Google-native MIME types) and raw stream
-//! download. Includes the path-traversal guard.
+//! Download a Drive file to disk. Handles both export-to-Office (for
+//! Google-native MIME types) and raw stream download. Includes a
+//! path-traversal guard.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

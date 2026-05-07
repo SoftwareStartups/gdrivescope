@@ -1,9 +1,8 @@
-//! TOML workspace config. Ported from `src/config/workspace.ts`.
+//! TOML workspace config at `~/.config/gdrivescope/config.toml`.
 //!
-//! Layout (snake_case on disk, camelCase / Rust-style in code via serde
-//! aliases). Roundtrips losslessly: `[[roots]]` array, `[folders]` map,
-//! and per-section `[llm]`, `[embedding]`, `[extraction]`, `[ollama]`,
-//! `[azure]` overrides.
+//! Round-trips losslessly: `[[roots]]` array, `[folders]` map, and per-
+//! section `[llm]`, `[embedding]`, `[extraction]`, `[ollama]`, `[azure]`
+//! overrides.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

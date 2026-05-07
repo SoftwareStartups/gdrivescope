@@ -25,7 +25,7 @@ pub struct DownloadArgs {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct DownloadOk {
     output_path: String,
     bytes: u64,

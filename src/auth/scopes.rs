@@ -1,10 +1,9 @@
-//! Drive OAuth scope constants + hierarchy. Ported from `src/auth/scopes.ts`.
+//! Drive OAuth scope constants + hierarchy.
 //!
 //! Hierarchy is one-directional: `drive.readonly` (full) implies
-//! `drive.metadata.readonly`. The reverse never holds. This means a session
-//! authorized for the broader scope does NOT need to re-login when a narrower
-//! one is required, which is what users expect (see auth-scope-hierarchy
-//! preference in saved feedback).
+//! `drive.metadata.readonly`. The reverse never holds. A session authorized
+//! for the broader scope satisfies a narrower-scope requirement without
+//! re-login.
 
 use crate::error::{CliError, ErrorCode};
 
@@ -46,9 +45,9 @@ pub fn scope_required_error(required: &str) -> CliError {
     )
 }
 
-/// Verify the active vault entry was issued with sufficient scope. Mirrors
-/// `ensureScope` in `src/auth/scopes.ts`. Returns `AUTH_REQUIRED` when no
-/// vault is present, `SCOPE_REQUIRED` when scope is too narrow.
+/// Verify the active vault entry was issued with sufficient scope.
+/// Returns `AUTH_REQUIRED` when no vault is present, `SCOPE_REQUIRED` when
+/// scope is too narrow.
 pub async fn ensure_scope(
     vault: &dyn crate::auth::vault::VaultStore,
     required: &str,

@@ -1,6 +1,5 @@
-//! Azure OpenAI embeddings. Ported from `src/llm/azure-openai-embedding.ts`.
-//! URL shape:
-//!   {endpoint}/openai/deployments/{deployment}/embeddings?api-version=...
+//! Azure OpenAI embeddings.
+//! URL: `{endpoint}/openai/deployments/{deployment}/embeddings?api-version=…`.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -8,6 +7,7 @@ use serde_json::json;
 
 use super::embed_batch::{batch_embed, validate_probe_dimensions, ProbeOptions};
 use super::embedding::EmbeddingProvider;
+use super::http::{post_json, Auth, ErrorMapping};
 use crate::error::{CliError, ErrorCode};
 
 const BATCH: usize = 96;
@@ -79,33 +79,21 @@ impl AzureOpenaiEmbeddingProvider {
     }
 
     async fn call(&self, body: &serde_json::Value) -> Result<EmbeddingsResponse, CliError> {
-        let resp = self
-            .http
-            .post(self.url())
-            .header("api-key", &self.api_key)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                CliError::new(
-                    format!("Azure OpenAI embedding call failed: {e}"),
-                    ErrorCode::EmbedCallFailed,
-                )
-            })?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(CliError::new(
-                format!("Azure OpenAI embedding call failed (status {status}): {text}"),
-                ErrorCode::EmbedCallFailed,
-            ));
-        }
-        resp.json().await.map_err(|e| {
-            CliError::new(
-                format!("Azure OpenAI embedding parse failed: {e}"),
-                ErrorCode::EmbedCallFailed,
-            )
-        })
+        let map = ErrorMapping {
+            call: ErrorCode::EmbedCallFailed,
+            parse: ErrorCode::EmbedCallFailed,
+            unreachable: None,
+        };
+        post_json(
+            &self.http,
+            &self.url(),
+            Auth::Header("api-key", &self.api_key),
+            &[],
+            body,
+            "Azure OpenAI embedding",
+            &map,
+        )
+        .await
     }
 }
 
@@ -138,5 +126,57 @@ impl EmbeddingProvider for AzureOpenaiEmbeddingProvider {
             remediation_hint:
                 "Set GDRIVESCOPE_AZURE_OPENAI_EMBEDDING_DIMENSIONS or pick a different deployment.",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    #[tokio::test]
+    async fn happy_path_returns_vectors() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock(
+                "POST",
+                "/openai/deployments/dep/embeddings?api-version=2024-06-01",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":[{"embedding":[0.1,0.2]}]}"#)
+            .create_async()
+            .await;
+        let p = AzureOpenaiEmbeddingProvider::new(AzureOpenaiEmbeddingOptions {
+            api_key: "k".into(),
+            endpoint: srv.url(),
+            api_version: None,
+            deployment: Some("dep".into()),
+            model: None,
+            dimensions: Some(2),
+        });
+        let out = p.embed(&["a".into()]).await.unwrap();
+        assert_eq!(out, vec![vec![0.1, 0.2]]);
+    }
+
+    #[tokio::test]
+    async fn http_error_maps_to_embed_call_failed() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(503)
+            .with_body("down")
+            .create_async()
+            .await;
+        let p = AzureOpenaiEmbeddingProvider::new(AzureOpenaiEmbeddingOptions {
+            api_key: "k".into(),
+            endpoint: srv.url(),
+            api_version: None,
+            deployment: Some("dep".into()),
+            model: None,
+            dimensions: None,
+        });
+        let err = p.embed(&["a".into()]).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::EmbedCallFailed);
     }
 }

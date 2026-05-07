@@ -1,17 +1,14 @@
-//! In-memory Drive graph + node types. Replaces graphology with a hand-rolled
-//! adjacency-list graph since the TS code only uses
-//! `addNode`/`hasNode`/`addEdge`/`getNodeAttributes`/`outNeighbors`. Ported
-//! from `src/graph/model.ts` (types) and the implicit operations exercised
-//! by `hydrate.ts` and `paths.ts`.
+//! In-memory Drive graph + node types. Hand-rolled adjacency-list graph
+//! supporting only the operations the pipeline needs:
+//! `add_node`/`has_node`/`add_edge`/`get`/`out_neighbors`.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Mirrors `Node` in `src/graph/model.ts`. Kept JSON-shape identical so
-/// commands like `show --json` produce the same envelope payload as TS.
+/// One Drive node — folder, file, or shortcut — as persisted by the store
+/// and emitted in JSON envelopes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct Node {
     pub id: String,
     pub parent_id: Option<String>,
@@ -37,7 +34,8 @@ pub struct Node {
     pub last_error: Option<String>,
 }
 
-/// Mirrors `DriveNodeInput`. Used as the upsert payload from drive traversal.
+/// Upsert payload from drive traversal — the subset of node fields we
+/// learn directly from the Drive API before extraction/LLM enrichment.
 #[derive(Debug, Clone)]
 pub struct DriveNodeInput {
     pub id: String,
@@ -96,9 +94,9 @@ impl DriveGraph {
         self.nodes.insert(node.id.clone(), node);
     }
 
-    /// Add a directed edge `parent → child`. No-op if the edge already exists
-    /// (graphology errors on duplicates; we silently dedupe to keep
-    /// `hydrate` simple). Endpoints must be present — debug builds assert.
+    /// Add a directed edge `parent → child`. No-op if the edge already
+    /// exists (silent dedup keeps `hydrate` simple). Endpoints must be
+    /// present — debug builds assert.
     pub fn add_edge(&mut self, parent: &str, child: &str) {
         debug_assert!(
             self.nodes.contains_key(parent),
@@ -190,14 +188,13 @@ mod tests {
     }
 
     #[test]
-    fn node_serialization_uses_camelcase() {
+    fn node_serialization_uses_snake_case() {
         let node = n("a", Some("b"), "foo");
         let json = serde_json::to_string(&node).unwrap();
-        // Required fields land in camelCase, optional empties stay omitted.
-        assert!(json.contains(r#""parentId":"b""#));
-        assert!(json.contains(r#""mimeType":"application/vnd.google-apps.folder""#));
-        assert!(json.contains(r#""metadataJson":"{}""#));
-        assert!(json.contains(r#""rootId":null"#));
+        assert!(json.contains(r#""parent_id":"b""#));
+        assert!(json.contains(r#""mime_type":"application/vnd.google-apps.folder""#));
+        assert!(json.contains(r#""metadata_json":"{}""#));
+        assert!(json.contains(r#""root_id":null"#));
         assert!(!json.contains(r#""size""#)); // skipped because None
     }
 }

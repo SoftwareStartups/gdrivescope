@@ -1,7 +1,6 @@
-//! Classifies Drive API errors into permanent vs transient. Mirrors
-//! `src/drive/permanent-errors.ts` 1:1: same reasons, same prefix marker,
-//! same message format. The pipeline persists permanent errors into
-//! `nodes.last_error` with the prefix so resume runs skip them.
+//! Classify Drive API errors as permanent vs. transient. The pipeline
+//! persists permanent errors into `nodes.last_error` with a known prefix
+//! so resume runs skip them.
 
 use crate::error::CliError;
 
@@ -44,11 +43,9 @@ pub const PERMANENT_ERROR_PREFIX: &str = "[permanent:";
 /// or via a flattened message-string fallback.
 pub fn classify(err: &CliError) -> Option<PermanentInfo> {
     let msg = &err.message;
-    // Best-effort: parse JSON-shaped Google errors that may have been
-    // captured into the message text. The TS code does `response?.data?.error`
-    // → `errors[0].reason`; in our http_error helper we put the first body
-    // line into the message, which generally contains JSON if the API
-    // returned a structured error.
+    // Drive REST error bodies are usually `{"error":{"errors":[{"reason":...}]}}`,
+    // but our http_error helper folds the first body line into the message
+    // string — sometimes that's JSON, sometimes flattened text. Try both.
     if let Some(reason) = extract_reason_from_json_body(msg) {
         if let Some(reason) = PermanentReason::from_reason(&reason) {
             return Some(PermanentInfo {
@@ -57,8 +54,8 @@ pub fn classify(err: &CliError) -> Option<PermanentInfo> {
             });
         }
     }
-    // Substring fallback for the cases where Google's client flattens the
-    // error into a free-form string. Mirrors `matchMessageReason`.
+    // Substring fallback for cases where the error is flattened into a
+    // free-form string instead of structured JSON.
     if msg.contains("appNotAuthorizedToFile") {
         return Some(PermanentInfo {
             reason: PermanentReason::AppNotAuthorizedToFile,

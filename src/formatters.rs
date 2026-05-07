@@ -1,6 +1,5 @@
-//! Human / JSON output emitter. Ported from `src/formatters/output.ts` in a
-//! later phase. Phase 1 stub only emits via `serde_json` to stdout when JSON
-//! mode is on; otherwise lets callers print human strings directly.
+//! Output emitter — JSON envelope on stdout when `--json` is active,
+//! caller-provided human strings otherwise.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

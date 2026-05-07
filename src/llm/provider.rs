@@ -1,4 +1,4 @@
-//! `LlmProvider` trait + types. Ported from `src/llm/provider.ts`.
+//! `LlmProvider` trait + summarize input/output types.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,6 @@ use super::classification::Classification;
 use crate::error::CliError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LlmSummary {
     pub summary: String,
     pub classification: Classification,

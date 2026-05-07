@@ -1,10 +1,10 @@
-//! OpenAI Chat Completions API w/ JSON-schema strict response_format.
-//! Ported from `src/llm/openai.ts`.
+//! OpenAI Chat Completions with strict json_schema response_format.
 
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::http::{post_json, Auth, ErrorMapping};
 use super::prompts::{summary_user, SUMMARY_SYSTEM};
 use super::provider::{LlmProvider, LlmSummarizeInput, LlmSummary};
 use super::schema::llm_summary_schema;
@@ -33,15 +33,33 @@ pub struct OpenaiProvider {
     http: reqwest::Client,
     api_key: String,
     model: String,
+    base_url: String,
 }
 
 impl OpenaiProvider {
     pub fn new(api_key: impl Into<String>, model: Option<String>) -> Self {
+        Self::with_base_url(api_key, model, OPENAI_API.to_string())
+    }
+
+    pub fn with_base_url(
+        api_key: impl Into<String>,
+        model: Option<String>,
+        base_url: String,
+    ) -> Self {
         Self {
             http: reqwest::Client::new(),
             api_key: api_key.into(),
             model: model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
+            base_url,
         }
+    }
+}
+
+fn err_map() -> ErrorMapping {
+    ErrorMapping {
+        call: ErrorCode::LlmCallFailed,
+        parse: ErrorCode::LlmMalformedOutput,
+        unreachable: None,
     }
 }
 
@@ -67,30 +85,16 @@ impl LlmProvider for OpenaiProvider {
                 }
             }
         });
-        let resp = self
-            .http
-            .post(OPENAI_API)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                CliError::new(format!("OpenAI call failed: {e}"), ErrorCode::LlmCallFailed)
-            })?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(CliError::new(
-                format!("OpenAI call failed (status {status}): {text}"),
-                ErrorCode::LlmCallFailed,
-            ));
-        }
-        let chat: ChatResponse = resp.json().await.map_err(|e| {
-            CliError::new(
-                format!("OpenAI parse failed: {e}"),
-                ErrorCode::LlmMalformedOutput,
-            )
-        })?;
+        let chat: ChatResponse = post_json(
+            &self.http,
+            &self.base_url,
+            Auth::Bearer(&self.api_key),
+            &[],
+            &body,
+            "OpenAI",
+            &err_map(),
+        )
+        .await?;
         let text = chat
             .choices
             .into_iter()
@@ -109,5 +113,67 @@ impl LlmProvider for OpenaiProvider {
             )
         })?;
         validate_raw_summary("OpenAI", &parsed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    fn input() -> LlmSummarizeInput {
+        LlmSummarizeInput {
+            markdown: "doc".into(),
+            filename: "f".into(),
+            path: "p".into(),
+            mime_type: "text/plain".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn happy_path_parses_choice_content() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"choices":[{"message":{"content":"{\"summary\":\"S\",\"classification\":\"other\",\"key_topics\":[\"t\"]}"}}]}"#,
+            )
+            .create_async()
+            .await;
+        let p = OpenaiProvider::with_base_url("k", None, srv.url());
+        let out = p.summarize(&input()).await.unwrap();
+        assert_eq!(out.summary, "S");
+    }
+
+    #[tokio::test]
+    async fn http_error_maps_to_llm_call_failed() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/")
+            .with_status(429)
+            .with_body("rate limited")
+            .create_async()
+            .await;
+        let p = OpenaiProvider::with_base_url("k", None, srv.url());
+        let err = p.summarize(&input()).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::LlmCallFailed);
+        assert!(err.message.contains("429"));
+    }
+
+    #[tokio::test]
+    async fn empty_choices_errors() {
+        let mut srv = Server::new_async().await;
+        let _m = srv
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"choices":[]}"#)
+            .create_async()
+            .await;
+        let p = OpenaiProvider::with_base_url("k", None, srv.url());
+        let err = p.summarize(&input()).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::LlmMalformedOutput);
     }
 }

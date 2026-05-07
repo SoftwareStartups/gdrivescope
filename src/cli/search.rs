@@ -31,7 +31,7 @@ pub struct SearchArgs {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct SearchData {
     hits: Vec<Hit>,
 }

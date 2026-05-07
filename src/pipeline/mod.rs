@@ -1,13 +1,11 @@
 //! Index pipeline. Orchestrates Drive traversal → markdown extraction →
-//! LLM summarization → embedding. Ported from
-//! `src/pipeline/{index-pipeline,concurrency}.ts`.
+//! LLM summarization → embedding.
 //!
-//! Concurrency model differs from TS in one structural way: rusqlite's
-//! `Connection` is `!Sync`, so process tasks under tokio's multi-thread
-//! runtime can't share `&Store`. Instead, each `process_one` returns a
-//! `ProcessOutcome` and the main task applies results to the Store
-//! sequentially. The drive/LLM phases still run concurrently, gated by
-//! their own `tokio::sync::Semaphore`s — same as the TS port — but writes
+//! Concurrency model: rusqlite's `Connection` is `!Sync`, so process tasks
+//! under tokio's multi-thread runtime can't share `&Store`. Instead, each
+//! `process_one` returns a `ProcessOutcome` and the main task applies
+//! results to the Store sequentially. The drive/LLM phases still run
+//! concurrently, gated by their own `tokio::sync::Semaphore`s — but writes
 //! to the DB happen back on the orchestrator task.
 
 pub mod pruning;
@@ -35,8 +33,10 @@ use crate::llm::embedding::EmbeddingProvider;
 use crate::llm::provider::{LlmProvider, LlmSummarizeInput};
 use crate::pipeline::pruning::{compute_prune_set, PruneSetInput};
 
-/// Embed only the first N chars of each document. Whole-doc markdown often
-/// overruns the model's context window; per-chunk embeddings are deferred.
+/// Embed the first 2000 chars of each document. Most embedding models cap
+/// at 8k tokens (~32k chars), but document-level similarity is dominated
+/// by lead paragraphs in practice — per-chunk embeddings would multiply
+/// storage cost without adding signal for our search use case.
 const EMBED_WINDOW: usize = 2000;
 const DEFAULT_DRIVE_CONCURRENCY: usize = 15;
 const DEFAULT_LLM_CONCURRENCY: usize = 4;
@@ -92,7 +92,7 @@ impl IndexStats {
 pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliError> {
     let mut stats = IndexStats::default();
 
-    // ── Phase 1: traverse + upsert ──────────────────────────────────────
+    // ── Stage 1: traverse + upsert ──────────────────────────────────────
     let (tx, mut rx) = mpsc::channel::<DriveNodeInput>(256);
     let traverse_opts = TraverseOptions {
         root_id: opts.root_id.clone(),
@@ -217,7 +217,7 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
 
     stats.process_ms = process_start.elapsed().as_millis();
 
-    // ── Phase 3: embedding ──────────────────────────────────────────────
+    // ── Stage 3: embedding ──────────────────────────────────────────────
     if let Some(embedding) = opts.embedding.as_ref() {
         opts.store
             .init_vector_table(embedding.dimensions(), opts.rebuild_embeddings)?;
@@ -351,7 +351,7 @@ async fn process_one(
     llm_sem: Arc<Semaphore>,
     workdir: std::path::PathBuf,
     max_size_bytes: u64,
-    _max_pdf_pages: usize,
+    max_pdf_pages: usize,
 ) -> ProcessOutcome {
     let outcome_meta = (
         node.id.clone(),
@@ -417,8 +417,6 @@ async fn process_one(
         };
         let download_mime = download.mime_type.clone();
 
-        // PDF first-N-pages slicing is deferred (see extract.rs notes); for
-        // now we extract the whole PDF.
         let markdown = if download_mime == "text/plain" || download_mime == "text/csv" {
             String::from_utf8_lossy(&raw).into_owned()
         } else {
@@ -428,7 +426,10 @@ async fn process_one(
                     raw.len(),
                 )));
             }
-            match extract_to_markdown(raw, &download_mime, ExtractOptions::default()).await {
+            let opts = ExtractOptions {
+                max_pdf_pages: (max_pdf_pages > 0).then_some(max_pdf_pages),
+            };
+            match extract_to_markdown(raw, &download_mime, opts).await {
                 Ok(m) => m,
                 Err(e) => return make(ProcessResult::Failed(e)),
             }

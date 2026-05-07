@@ -1,15 +1,7 @@
-//! OS keyring-backed credential vault. Ported from `src/auth/keychain.ts`.
-//! The on-disk JSON shape (under one keyring entry) MUST stay byte-equivalent
-//! with the TS version so logging in via the TS binary and continuing under
-//! the Rust binary (and vice versa) keeps working — Verification §4.
-//!
-//! On macOS, writes go through `macos_unrestricted` (raw FFI to
-//! `SecAccessCreate(trustedlist=NULL)` + `SecItemAdd(kSecAttrAccess=...)`)
-//! to produce a permissive-ACL entry — matches what the TS implementation
-//! did via Bun's `allowUnrestrictedAccess: true`. Keyring v3's
-//! `apple-native` path scopes entries to the writing binary's codesign
-//! identity, which prompts the user every time a different binary (e.g. a
-//! freshly compiled debug build) tries to read.
+//! OS keyring-backed credential vault. macOS Keychain via
+//! `Security.framework` (with permissive ACL so a fresh `cargo build`
+//! doesn't re-prompt the user), Linux `secret-service` via dbus, Windows
+//! Credential Manager.
 
 use serde::{Deserialize, Serialize};
 
@@ -18,20 +10,9 @@ use crate::error::{CliError, ErrorCode};
 const SERVICE: &str = "com.softwarestartups.gdrivescope";
 const VAULT_KEY: &str = "gdrivescope.vault";
 
-// The TS code best-effort-deletes a list of legacy keychain keys
-// (`GOOGLE_OAUTH_TOKENS`, `GOOGLE_OAUTH_CLIENT_ID`,
-// `GOOGLE_OAUTH_CLIENT_SECRET`) that older pre-Vault TS installs created.
-// We deliberately do NOT replicate that cleanup in Rust: Bun's
-// `Bun.secrets.delete` is silent on ACL mismatches, but `SecItemDelete`
-// can still surface a "Confirm Access" prompt for entries whose ACL
-// doesn't include the calling binary. Forcing the user through prompts on
-// every `logout` is worse UX than the stale rows. Users with legacy
-// entries can clear them via Keychain Access.app.
-
-/// Serialized 1:1 with TS `Vault` (see `src/auth/keychain.ts:16-19`).
-/// `obtainedAt` is milliseconds since the UNIX epoch (matches `Date.now()`).
+/// Persisted shape of the keyring entry. `obtained_at` is milliseconds
+/// since the UNIX epoch.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct Vault {
     pub refresh_token: String,
     pub scope: String,
@@ -40,8 +21,8 @@ pub struct Vault {
     pub client_secret: String,
 }
 
-/// Subset projected to "what the rest of the app needs" — mirrors TS
-/// `getAuth()` returning `StoredAuth`.
+/// Subset of `Vault` projected to "what the rest of the app needs" —
+/// the fields used outside the login path.
 #[derive(Debug, Clone)]
 pub struct StoredAuth {
     pub refresh_token: String,
@@ -117,8 +98,8 @@ impl VaultStore for KeyringVault {
         let Some(raw) = result else {
             return Ok(None);
         };
-        // Mirror the TS isVault validation: malformed JSON yields None, never
-        // an error — same UX as TS's swallow-and-cache-null flow.
+        // Malformed JSON yields None rather than erroring — the user sees
+        // "auth required" and re-runs `login`, instead of a parse error.
         Ok(serde_json::from_str::<Vault>(&raw).ok())
     }
 
@@ -177,13 +158,13 @@ fn delete_if_present(entry: &keyring::Entry) -> bool {
     }
 }
 
-/// macOS Keychain writes with permissive ACL ("any app may read"), bypassing
-/// the keyring crate's binary-identity-bound default. Implementation parity
-/// target: Bun's `Bun.secrets.set(..., { allowUnrestrictedAccess: true })`,
-/// which boils down to `SecAccessCreate(trustedlist=NULL)` +
-/// `SecItemAdd(kSecAttrAccess=...)`. The security-framework v3 crate doesn't
-/// surface ACL APIs, so we link `Security.framework` directly for the one
-/// missing call.
+/// macOS Keychain writes with permissive ACL ("any app may read"). Each
+/// fresh `cargo build` produces a new ad-hoc codesign identity, so without
+/// a permissive ACL the OS would prompt the user on every read of an
+/// existing entry. We construct the entry with `SecAccessCreate(trustedlist
+/// = NULL)` + `SecItemAdd(kSecAttrAccess=...)` because the keyring crate
+/// (and security-framework v3) don't expose ACL APIs; the code links
+/// `Security.framework` directly for the one missing call.
 #[cfg(target_os = "macos")]
 mod macos_unrestricted {
     use core_foundation::array::CFArrayRef;
@@ -210,7 +191,7 @@ mod macos_unrestricted {
     // exported either — it's only listed for SecAccessControl-based keys
     // (`kSecAttrAccessControl`, the data-protection-keychain variant).
     // Bind both ourselves. SecAccessCreate is documented as legacy but still
-    // works on macOS 26 (Tahoe) and is what Bun's secrets API uses today.
+    // works on macOS 26 (Tahoe).
     #[repr(C)]
     struct OpaqueSecAccess(std::ffi::c_void);
     type SecAccessRef = *mut OpaqueSecAccess;
@@ -251,17 +232,18 @@ mod macos_unrestricted {
     ///
     /// Existing entries are deleted first so the new permissive ACL takes
     /// effect immediately. If a previous build wrote a restrictive entry,
-    /// the migration delete may surface a one-time "Confirm Access" prompt;
-    /// from then on every read and write is silent. If the user denies the
-    /// migration prompt, the call falls through to `SecItemUpdate` (data
-    /// gets refreshed but the existing restrictive ACL is preserved — the
-    /// next login attempt re-tries the migration).
+    /// the delete may surface a one-time "Confirm Access" prompt; from
+    /// then on every read and write is silent. If the user denies the
+    /// prompt, the call falls through to `SecItemUpdate` (data gets
+    /// refreshed but the existing restrictive ACL is preserved — the next
+    /// login attempt re-tries the upgrade).
     pub fn set_unrestricted(service: &str, account: &str, password: &[u8]) -> Result<(), CliError> {
         let svc = CFString::new(service);
         let acct = CFString::new(account);
         let data = CFData::from_buffer(password);
 
-        // Best-effort migration of a pre-existing restrictive entry.
+        // Best-effort delete of any existing restrictive entry so the new
+        // permissive ACL takes effect immediately.
         let _ = delete(service, account);
 
         // `trusted_list = NULL` → "trust any app" per Apple's
@@ -302,10 +284,10 @@ mod macos_unrestricted {
             ));
         }
 
-        // Migration delete didn't take (typically: user denied the prompt).
+        // The delete didn't take (typically: user denied the prompt).
         // Update the value in place; the existing ACL is preserved by
-        // SecItemUpdate so the user is not stuck — they can `logout` and
-        // `login` again later to retry the migration.
+        // SecItemUpdate so the user isn't stuck — they can `logout` and
+        // `login` again later to retry.
         let query = CFDictionary::from_CFType_pairs(&build_lookup_pairs(&svc, &acct));
         let update = CFDictionary::from_CFType_pairs(&[(
             unsafe { CFString::wrap_under_get_rule(kSecValueData) }.as_CFType(),
@@ -343,7 +325,6 @@ mod macos_unrestricted {
 }
 
 /// Trim + validate a credential as it crosses the boundary into the vault.
-/// Mirrors `sanitizeCredential` in `src/auth/keychain.ts:122-130`.
 pub fn sanitize_credential(raw: &str) -> Result<String, CliError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -370,8 +351,7 @@ pub fn sanitize_credential(raw: &str) -> Result<String, CliError> {
 fn has_control_chars(s: &str) -> bool {
     s.chars().any(|c| {
         let b = c as u32;
-        // Match TS regex /[\x00-\x08\x0b\x0c\x0e-\x1f]/ — every C0 control
-        // except TAB (\x09), LF (\x0a), and CR (\x0d).
+        // Reject every C0 control except TAB (\x09), LF (\x0a), CR (\x0d).
         (b <= 0x08) || b == 0x0b || b == 0x0c || (0x0e..=0x1f).contains(&b)
     })
 }
@@ -379,7 +359,7 @@ fn has_control_chars(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
 
     /// In-memory `VaultStore` for tests — never touches the real keychain.
     #[derive(Default)]
@@ -390,14 +370,14 @@ mod tests {
     #[async_trait::async_trait]
     impl VaultStore for MemoryVault {
         async fn get(&self) -> Result<Option<Vault>, CliError> {
-            Ok(self.inner.lock().unwrap().clone())
+            Ok(self.inner.lock().await.clone())
         }
         async fn set(&self, vault: &Vault) -> Result<(), CliError> {
-            *self.inner.lock().unwrap() = Some(vault.clone());
+            *self.inner.lock().await = Some(vault.clone());
             Ok(())
         }
         async fn clear(&self) -> Result<bool, CliError> {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self.inner.lock().await;
             let was_some = g.is_some();
             *g = None;
             Ok(was_some)
@@ -415,23 +395,20 @@ mod tests {
     }
 
     #[test]
-    fn vault_serializes_camelcase() {
+    fn vault_serializes_snake_case() {
         let json = serde_json::to_string(&vault()).unwrap();
-        // Field order: serde follows declaration order, which mirrors TS.
         assert_eq!(
             json,
-            r#"{"refreshToken":"refresh-xyz","scope":"https://www.googleapis.com/auth/drive.readonly","obtainedAt":1700000000000,"clientId":"client-id","clientSecret":"client-secret"}"#,
+            r#"{"refresh_token":"refresh-xyz","scope":"https://www.googleapis.com/auth/drive.readonly","obtained_at":1700000000000,"client_id":"client-id","client_secret":"client-secret"}"#,
         );
     }
 
     #[test]
-    fn vault_deserializes_from_ts_shape() {
-        // Keys are camelCase in the TS-emitted JSON.
-        let json =
-            r#"{"refreshToken":"r","scope":"s","obtainedAt":42,"clientId":"c","clientSecret":"x"}"#;
-        let v: Vault = serde_json::from_str(json).unwrap();
-        assert_eq!(v.refresh_token, "r");
-        assert_eq!(v.obtained_at, 42);
+    fn vault_round_trips_through_serde() {
+        let original = vault();
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: Vault = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, original);
     }
 
     #[tokio::test]

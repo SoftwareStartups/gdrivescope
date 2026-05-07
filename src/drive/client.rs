@@ -1,8 +1,7 @@
-//! Google Drive REST client. Replaces `src/drive/client.ts` plus the
-//! `@googleapis/drive` + `google-auth-library` dependencies. Speaks the
-//! 3 endpoints we use (files.list, files.get, files.export) directly via
-//! `reqwest`, with the access token sourced from the Vault and refreshed
-//! once at construction.
+//! Google Drive REST client. Speaks the three endpoints we use
+//! (`files.list`, `files.get`, `files.export`) directly via `reqwest`,
+//! with the access token sourced from the Vault and refreshed once at
+//! construction.
 
 use serde::{Deserialize, Serialize};
 
@@ -15,8 +14,7 @@ const DRIVE_BASE: &str = "https://www.googleapis.com/drive/v3";
 const AUTH_REQUIRED_MSG: &str = "Run `gdrivescope login` first.";
 
 /// One Drive file. We keep the raw JSON object so we can persist the full
-/// payload as `metadata_json` (mirrors the TS `file as Record<string,
-/// unknown>` cast) AND offer typed accessors.
+/// payload as `metadata_json` AND offer typed accessors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DriveFile {

@@ -1,5 +1,4 @@
-//! LLM + embedding provider resolvers. Direct ports of
-//! `src/llm/{llm-resolver,embedding-resolver}.ts`.
+//! Resolve the active LLM and embedding providers.
 //!
 //! Cascade per provider class:
 //!     flag (--provider) → env (GDRIVESCOPE_*_PROVIDER) → config → infer.

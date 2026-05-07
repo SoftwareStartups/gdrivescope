@@ -155,13 +155,13 @@ Node kinds: `folder` (Drive folders), `file` (extractable content — Docs, PDFs
 gdrivescope --json list | jq '.data.files[] | {id, name}'
 
 # List folder recursively
-gdrivescope --json list FOLDER_ID -r | jq '.data.files[] | {id, name, mimeType}'
+gdrivescope --json list FOLDER_ID -r | jq '.data.files[] | {id, name, mime_type}'
 
 # Only folders
 gdrivescope --json list FOLDER_ID -r --type folder | jq '.data.files[] | {id, name}'
 
 # Only extractable files
-gdrivescope --json list FOLDER_ID -r --type file | jq '.data.files[] | {id, name, mimeType}'
+gdrivescope --json list FOLDER_ID -r --type file | jq '.data.files[] | {id, name, mime_type}'
 
 # Limit output
 gdrivescope --json list FOLDER_ID -r --limit 50 | jq '.data.files | length'
@@ -174,7 +174,7 @@ gdrivescope show <ID>
 ```
 
 ```bash
-gdrivescope --json show FILE_ID | jq '.data | {name: .node.name, path, mime: .node.mimeType, summary: .node.summary, keyTopics: .node.keyTopics}'
+gdrivescope --json show FILE_ID | jq '.data | {name: .node.name, path, mime: .node.mime_type, summary: .node.summary, key_topics: .node.key_topics}'
 ```
 
 ### search
@@ -227,13 +227,13 @@ Formats: `auto` (export Google Workspace docs via export map), `raw` (binary byt
 
 ```bash
 # Download to current directory
-gdrivescope --json download FILE_ID | jq '.data | {outputPath, bytes}'
+gdrivescope --json download FILE_ID | jq '.data | {output_path, bytes}'
 
 # Download to specific path
-gdrivescope --json download FILE_ID -o ./reports/q4.pdf | jq '.data | {outputPath, bytes}'
+gdrivescope --json download FILE_ID -o ./reports/q4.pdf | jq '.data | {output_path, bytes}'
 
 # Download raw bytes (skip export conversion)
-gdrivescope --json download FILE_ID --format raw | jq '.data | {outputPath, bytes}'
+gdrivescope --json download FILE_ID --format raw | jq '.data | {output_path, bytes}'
 ```
 
 ## Global Flags

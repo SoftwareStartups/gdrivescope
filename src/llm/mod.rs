@@ -1,17 +1,19 @@
-pub mod anthropic;
-pub mod azure_openai;
-pub mod azure_openai_embedding;
 pub mod classification;
 pub mod embed_batch;
 pub mod embedding;
 pub mod env;
-pub mod ollama;
-pub mod ollama_embedding;
-pub mod openai;
-pub mod openai_embedding;
 pub mod prompts;
 pub mod provider;
 pub mod resolver;
 pub mod schema;
 pub mod summary_parse;
-pub mod voyage_embedding;
+
+pub(crate) mod anthropic;
+pub(crate) mod azure_openai;
+pub(crate) mod azure_openai_embedding;
+pub(crate) mod http;
+pub(crate) mod ollama;
+pub(crate) mod ollama_embedding;
+pub(crate) mod openai;
+pub(crate) mod openai_embedding;
+pub(crate) mod voyage_embedding;

@@ -19,19 +19,17 @@ serde_json = "1"
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "time", "sync", "signal"] }
 
-# Phase 2 (data layer): SQLite + sqlite-vec.
-# `bundled` compiles SQLite from source statically — replaces the TS-side
-# `setCustomSQLite()` + system dylib hunting from `src/graph/sqlite-native.ts`.
+# SQLite + sqlite-vec. The `bundled` feature compiles SQLite from source so
+# we don't depend on a system libsqlite3 dylib at runtime.
 rusqlite = { version = "0.32", features = ["bundled"] }
 sqlite-vec = "0.1"
 bytemuck = "1"
 dirs = "5"
 
-# Phase 3 (auth): keychain vault + OAuth loopback PKCE + interactive prompt.
-# We hand-roll the loopback flow on `tokio::net::TcpListener` instead of
-# pulling in `yup-oauth2` so the on-disk Vault JSON stays byte-equivalent
-# to the TS implementation (cross-binary login interop is a Verification §4
-# requirement and yup-oauth2's TokenStorage trait would force a wrapper).
+# Auth: keychain vault + OAuth loopback PKCE. Loopback is hand-rolled on
+# `tokio::net::TcpListener` instead of `yup-oauth2` — yup-oauth2's
+# `TokenStorage` trait would force a wrapper around our `Vault` bigger than
+# the loopback flow itself.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 rpassword = "7"
@@ -42,47 +40,43 @@ rand = "0.8"
 url = "2"
 async-trait = "0.1"
 
-# Phase 4 (drive): hand-rolled reqwest calls to the 3 Drive REST endpoints
-# we use (files.list / files.get / files.export). Plan called for
-# `google-drive3`, but its huge generated surface, OpenSSL default, and
-# tight coupling to `yup-oauth2` (which we already opted out of in Phase 3)
-# would have been net more code than the direct REST port.
+# Drive: hand-rolled reqwest calls to the three REST endpoints we use
+# (`files.list`, `files.get`, `files.export`). google-drive3 ships a huge
+# generated surface, OpenSSL by default, and tight coupling to yup-oauth2.
 futures = "0.3"
 
-# Phase 5/10 (extract): native Rust Kreuzberg with the pure-Rust
-# `pdf-oxide` backend. Phase 5 originally shipped without `pdf` enabled
-# because kreuzberg 4.9.4 references `pdf_oxide = "^0.3.37"` and only
-# 0.3.33 was published at that time. Phase 10 retries — `pdf_oxide`
-# 0.3.44 is now on crates.io (released 2026-04-29) and resolves cleanly.
-# This restores PDF text-extraction without a libpdfium runtime dep
-# (pure Rust, single static binary preserved).
+# Document extraction: native Rust Kreuzberg with the pure-Rust pdf-oxide
+# backend — no libpdfium runtime dep, single static binary preserved.
 kreuzberg = { version = "4", default-features = false, features = ["pdf", "pdf-oxide", "office", "html", "xml", "email", "tokio-runtime"] }
 
-# Phase 6 (LLM): hand-rolled per-provider reqwest clients. Plan called for
-# `rig-core` to unify the 4 LLM + 4 embedding providers, but the same logic
-# that ruled out yup-oauth2 (Phase 3) and google-drive3 (Phase 4) applies:
-# rig-core owns its own builder/storage abstractions, custom request shapes
-# (Anthropic tool_use w/ cache_control, OpenAI json_schema strict, Ollama
-# `format` + retry-on-malformed, Voyage output_dimension) leak through, and
-# we'd need provider-specific shims. The 8 hand-rolled providers are
-# ~120 LOC each.
+# PDF page slicing: rewrite a PDF in memory to keep only the first N pages
+# before handing it to Kreuzberg. Pure Rust, no system deps.
+lopdf = "0.34"
+
+# LLM + embedding HTTP clients (~80 LOC each on top of the shared
+# `llm::http` helper). Hand-rolled because rig-core's builder/storage
+# abstractions don't accommodate the per-provider quirks (Anthropic
+# tool_use+cache_control, OpenAI strict JSON, Ollama format+retry, Voyage
+# output_dimension) without provider-specific shims that match hand-roll
+# size.
 backon = "1"
 
 tempfile = "3"
 toml = "0.8"
 
-# macOS-only: keyring v3 doesn't expose an ACL parameter, so generic-password
-# entries it creates are scoped to the writing binary's codesign identity.
-# Each fresh `cargo build` produces a new ad-hoc identifier, so the OS
-# prompts on every read of an existing entry. We bypass this by writing
-# our vault entry directly via SecAccessCreate(trustedlist=NULL) +
-# SecItemAdd(kSecAttrAccess), which matches what the TS implementation did
-# via `Bun.secrets.set(..., { allowUnrestrictedAccess: true })`. See
-# `src/auth/vault.rs::macos_unrestricted`.
+# macOS-only: keyring v3 doesn't expose an ACL parameter, so generic-
+# password entries it creates are scoped to the writing binary's codesign
+# identity — each fresh `cargo build` produces a new ad-hoc identifier and
+# the OS prompts on every read of an existing entry. We bypass this by
+# writing our vault entry directly via `SecAccessCreate(trustedlist=NULL)`
+# + `SecItemAdd(kSecAttrAccess=…)`. See `src/auth/vault.rs::macos_unrestricted`.
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 core-foundation-sys = "0.8"
 security-framework-sys = "2"
+
+[dev-dependencies]
+mockito = "1"
 
 [profile.release]
 codegen-units = 1
