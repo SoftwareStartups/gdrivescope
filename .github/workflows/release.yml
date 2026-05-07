@@ -19,45 +19,45 @@ jobs:
           - runner: ubuntu-latest
             os: linux
             arch: x64
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
             ext: ""
             archive: tar.gz
-            install_musl: true
+            install_linux_deps: true
           - runner: ubuntu-24.04-arm
             os: linux
             arch: arm64
             target: aarch64-unknown-linux-gnu
             ext: ""
             archive: tar.gz
-            install_musl: false
+            install_linux_deps: true
           - runner: macos-13
             os: darwin
             arch: x64
             target: x86_64-apple-darwin
             ext: ""
             archive: tar.gz
-            install_musl: false
+            install_linux_deps: false
           - runner: macos-15
             os: darwin
             arch: arm64
             target: aarch64-apple-darwin
             ext: ""
             archive: tar.gz
-            install_musl: false
+            install_linux_deps: false
           - runner: windows-latest
             os: windows
             arch: x64
             target: x86_64-pc-windows-msvc
             ext: ".exe"
             archive: zip
-            install_musl: false
+            install_linux_deps: false
           - runner: windows-11-arm
             os: windows
             arch: arm64
             target: aarch64-pc-windows-msvc
             ext: ".exe"
             archive: zip
-            install_musl: false
+            install_linux_deps: false
 
     runs-on: ${{ matrix.runner }}
 
@@ -70,12 +70,15 @@ jobs:
         shell: bash
         run: rustup target add ${{ matrix.target }}
 
-      - name: Install musl tools (Linux x64 only)
-        if: matrix.install_musl == true
+      # libdbus-1-dev: keyring's `sync-secret-service` backend transitively
+      # depends on libdbus-sys, whose build script requires libdbus headers
+      # and pkg-config to find them.
+      - name: Install Linux build deps
+        if: matrix.install_linux_deps == true
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y libdbus-1-dev pkg-config
 
       - name: Build release
         shell: bash

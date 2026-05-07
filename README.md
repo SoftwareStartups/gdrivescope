@@ -15,7 +15,7 @@ Key features:
 - Google Workspace files (Docs, Sheets, Slides) exported server-side as text/CSV
 - Summarization and classification via Anthropic, OpenAI, or Azure OpenAI
 - Vector embeddings (OpenAI, Azure OpenAI, or Voyage) stored in sqlite-vec for semantic search
-- Single static binary — bundled SQLite + sqlite-vec, no system libsqlite3 / libpdfium / OpenSSL required
+- Bundled SQLite + sqlite-vec, no system libsqlite3 / libpdfium / OpenSSL required (Linux dynamically links the system `libdbus-1.so.3` for keyring access)
 
 ## Prerequisites
 
@@ -480,9 +480,11 @@ cargo test                                   # Run all tests
 Cross-compile a release binary for another platform:
 
 ```bash
-rustup target add x86_64-unknown-linux-musl
-cargo build --release --target x86_64-unknown-linux-musl
+rustup target add x86_64-unknown-linux-gnu
+cargo build --release --target x86_64-unknown-linux-gnu
 ```
+
+Linux builds need `libdbus-1-dev` and `pkg-config` installed (Debian/Ubuntu: `sudo apt install libdbus-1-dev pkg-config`).
 
 ## License
 

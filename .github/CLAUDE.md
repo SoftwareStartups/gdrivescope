@@ -45,7 +45,7 @@ Applies to **every** `${{ }}` expression used inside a `run:` block — `github.
 
 - Triggers: push to any branch, PRs to `main`
 - Permissions: `contents: read` only
-- Single job: `cargo fmt --check` → `cargo clippy --all-targets -- -D warnings` → `cargo test` → `cargo build --release` → musl `cargo check` smoke test
+- Single job: install `libdbus-1-dev` + `pkg-config` → `cargo fmt --check` → `cargo clippy --all-targets -- -D warnings` → `cargo test` → `cargo build --release`
 - Toolchain pinned via `rust-toolchain.toml`; the runner's pre-installed `rustup` picks it up automatically — no third-party setup action
 
 ## Release Workflow (`workflows/release.yml`)
@@ -53,12 +53,13 @@ Applies to **every** `${{ }}` expression used inside a `run:` block — `github.
 - Triggers: push of `v*` tags
 - Permissions: `contents: write`, `actions: read`
 - 6-platform binary matrix:
-  - linux-x64 → `x86_64-unknown-linux-musl` (fully static)
+  - linux-x64 → `x86_64-unknown-linux-gnu`
   - linux-arm64 → `aarch64-unknown-linux-gnu`
   - darwin-x64 → `x86_64-apple-darwin`
   - darwin-arm64 → `aarch64-apple-darwin`
   - windows-x64 → `x86_64-pc-windows-msvc`
   - windows-arm64 → `aarch64-pc-windows-msvc`
+- Linux runners install `libdbus-1-dev` + `pkg-config` (keyring's `sync-secret-service` backend transitively links libdbus-1). Resulting binaries dynamically link `libdbus-1.so.3`, which is preinstalled on every Linux desktop.
 - Binary naming: `gdrivescope-<os>-<arch>[.exe]` archived as `.tar.gz` (Linux/macOS) or `.zip` (Windows)
 - macOS: linker emits `Signature=adhoc` automatically; the workflow asserts it via `codesign -dvv` so the binary doesn't SIGKILL on Sequoia+
 - A final `release` job collects all artifacts, generates `SHA256SUMS.txt`, and publishes a GitHub release with auto-generated notes

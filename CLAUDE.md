@@ -1,6 +1,6 @@
 # gdrivescope
 
-Native Rust CLI for Google Drive. Traverses folders into a directed graph, extracts document content to markdown, summarizes/embeds via pluggable LLM + embedding providers, and serves semantic search over a local SQLite database with a `sqlite-vec` virtual table. Single static binary, no runtime libsqlite3 / libpdfium / OpenSSL dependency.
+Native Rust CLI for Google Drive. Traverses folders into a directed graph, extracts document content to markdown, summarizes/embeds via pluggable LLM + embedding providers, and serves semantic search over a local SQLite database with a `sqlite-vec` virtual table. Bundles SQLite + sqlite-vec; on Linux dynamically links the system `libdbus-1` for keyring access. No libpdfium / OpenSSL runtime dependency.
 
 ## Environment variables
 
@@ -52,10 +52,14 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && 
 ```
 
 The `release.yml` workflow builds 6-platform binaries on `v*` tag pushes:
-linux-x64 (musl, fully static), linux-arm64, darwin-x64, darwin-arm64,
-windows-x64, windows-arm64. The `macos-*` runners' linker emits an ad-hoc
-signature automatically (verified by the workflow); no manual `codesign`
-step is needed for release artifacts.
+linux-x64, linux-arm64 (both `*-unknown-linux-gnu`), darwin-x64,
+darwin-arm64, windows-x64, windows-arm64. Linux runners install
+`libdbus-1-dev` + `pkg-config` so the `keyring` crate's secret-service
+backend (transitively `libdbus-sys`) can build; resulting binaries
+dynamically link `libdbus-1.so.3`, which is preinstalled on every Linux
+desktop. The `macos-*` runners' linker emits an ad-hoc signature
+automatically (verified by the workflow); no manual `codesign` step is
+needed for release artifacts.
 
 ## Architecture
 
