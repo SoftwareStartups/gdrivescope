@@ -1,6 +1,6 @@
 # gdrivescope
 
-A Bun-native TypeScript CLI for Google Drive: traverse folders into a local graph, extract and summarize documents via pluggable LLM + embedding providers, and run semantic search — all from your terminal or AI agent.
+A native Rust CLI for Google Drive: traverse folders into a local graph, extract and summarize documents via pluggable LLM + embedding providers, and run semantic search — all from your terminal or AI agent.
 
 ## What is it?
 
@@ -11,42 +11,13 @@ Key features:
 - OAuth login via the browser (loopback + PKCE, credentials in OS keychain)
 - BFS traversal of Drive folder trees with bounded-parallel API calls
 - Content extraction to markdown via Kreuzberg (PDF, Office, and 50+ formats)
+- Pure-Rust PDF extraction via pdf-oxide — no libpdfium runtime dependency
 - Google Workspace files (Docs, Sheets, Slides) exported server-side as text/CSV
 - Summarization and classification via Anthropic, OpenAI, or Azure OpenAI
 - Vector embeddings (OpenAI, Azure OpenAI, or Voyage) stored in sqlite-vec for semantic search
-- Single standalone binary (requires system SQLite with extension support — see [Prerequisites](#prerequisites))
+- Single static binary — bundled SQLite + sqlite-vec, no system libsqlite3 / libpdfium / OpenSSL required
 
 ## Prerequisites
-
-### SQLite with extension support
-
-gdrivescope uses [sqlite-vec](https://github.com/asg017/sqlite-vec) for vector search. Bun's bundled SQLite does not support loading extensions, so a system SQLite library is required at runtime.
-
-**macOS (Homebrew):**
-
-```bash
-brew install sqlite
-```
-
-Homebrew's sqlite is keg-only. gdrivescope automatically loads `/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib`.
-
-**Linux:**
-
-```bash
-# Debian / Ubuntu
-sudo apt install libsqlite3-0
-
-# Fedora / RHEL
-sudo dnf install sqlite-libs
-```
-
-gdrivescope loads `libsqlite3.so.0` from the system library path.
-
-**Custom path:**
-
-```bash
-export GDRIVESCOPE_SQLITE_LIB=/path/to/libsqlite3.so
-```
 
 ### Google OAuth credentials
 
@@ -98,14 +69,13 @@ chmod +x gdrivescope
 
 ### From source
 
-Prerequisites: [Bun](https://bun.sh) and [Task](https://taskfile.dev)
+Prerequisites: a Rust toolchain. The repo's `rust-toolchain.toml` pins MSRV 1.85; install [rustup](https://rustup.rs/) and it will fetch the right channel automatically.
 
 ```bash
 git clone https://github.com/SoftwareStartups/gdrivescope.git
 cd gdrivescope
-bun install
-task compile
-./dist/gdrivescope --help
+cargo build --release
+./target/release/gdrivescope --help
 ```
 
 ## Use with Claude Code
@@ -445,10 +415,8 @@ If you switch embedding providers (e.g. from OpenAI to Voyage), the vector dimen
 
 | Variable | Purpose |
 |---|---|
-| `GDRIVESCOPE_SQLITE_LIB` | Custom path to a SQLite library with extension support |
 | `GDRIVESCOPE_MAX_SIZE` | Default `--max-size` value (bytes) |
 | `GDRIVESCOPE_MAX_PDF_PAGES` | Default `--max-pdf-pages` value |
-| `GDRIVESCOPE_DB` | Custom database path (default `~/.config/gdrivescope/drive.db`) |
 | `GDRIVESCOPE_CONFIG` | Custom config path (default `~/.config/gdrivescope/config.toml`) |
 
 ## Configuration
@@ -483,8 +451,6 @@ Manage roots via `gdrivescope config add-root` / `config remove-root`.
 
 ## Troubleshooting
 
-**SQLite extension error** — If you see `Failed to load sqlite-vec extension`, install a system SQLite library with extension support for your platform (see [Prerequisites](#sqlite-with-extension-support)) or set `GDRIVESCOPE_SQLITE_LIB` to a capable libsqlite path.
-
 **Auth errors** — Run `gdrivescope logout` then `gdrivescope login` to re-authorize. Ensure your Google OAuth client has the `drive.readonly` scope enabled in the Google Cloud console.
 
 **`SCOPE_REQUIRED` on `index`** — Your current session was authorized with `drive.metadata.readonly`, which cannot download file content. Re-authorize with `gdrivescope login --scope drive.readonly`, or pass `--metadata-only` to `index` if you only need the folder/file metadata graph. A session authorized with `drive.readonly` already covers both paths — you should never see this error on a `drive.readonly` session.
@@ -494,7 +460,7 @@ Manage roots via `gdrivescope config add-root` / `config remove-root`.
 1. **You logged in with the default `drive.metadata.readonly` scope.** Re-run `gdrivescope login --scope drive.readonly`. Newer builds fail fast with `SCOPE_REQUIRED` before this can happen; older builds surface it per file.
 2. **The file is genuinely blocked to third-party apps.** The file was shared from an external Google Workspace tenant whose admin restricts third-party OAuth apps, or shared via "anyone with the link" instead of to your account. No scope change can fix this — ask the owner to re-share the file directly to your account, or copy it into a Shared Drive you can access. gdrivescope records these failures with a `[permanent:…]` marker in `last_error`, and `--resume` skips them on subsequent runs so they don't keep burning API quota.
 
-**Kreuzberg extraction failures** — Kreuzberg uses NAPI bindings for PDF/Office extraction. If they fail at runtime (e.g. on a musl-based Linux or inside a stripped container), the tool falls back to `@kreuzberg/wasm`. If both fail, the file is skipped with an error recorded in `last_error`.
+**Kreuzberg extraction failures** — Native Rust extraction via the `kreuzberg` crate, with `pdf-oxide` as the PDF backend. PDF text quality is the most likely thing to vary across documents; if a particular file fails extraction, the file is skipped with an error recorded in `last_error` and `--resume` will skip it on subsequent runs. No native libraries are required at runtime.
 
 **Provider selection** — The LLM provider resolves in order: `--provider` flag > `GDRIVESCOPE_LLM_PROVIDER` env > `config.toml [llm].provider` > auto-infer from available API keys. Embedding provider follows the same cascade. If no provider is explicitly configured, gdrivescope scans for available API keys and selects the first match.
 
@@ -503,17 +469,19 @@ Manage roots via `gdrivescope config add-root` / `config remove-root`.
 ## Development
 
 ```bash
-bun install           # Install dependencies
-task build            # Compile TypeScript to build/
-task lint             # Lint with Biome
-task format           # Format with Biome
-task test             # Run unit + integration tests
-task test:unit        # Unit tests only
-task test:integration # Integration tests only
-task check            # Lint + typecheck + tests
-task ci               # Full CI pipeline locally
-task compile          # Build standalone binary to dist/
-task compile:all      # Build all 6 platform binaries
+cargo build                                  # Debug build at target/debug/gdrivescope
+cargo build --release                        # Release build (~18 MB) at target/release/gdrivescope
+cargo fmt                                    # Format with rustfmt
+cargo fmt --check                            # Verify formatting
+cargo clippy --all-targets -- -D warnings    # Lint with clippy
+cargo test                                   # Run all tests (113 passing)
+```
+
+Cross-compile a release binary for another platform:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 ## License

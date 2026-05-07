@@ -1,6 +1,6 @@
 # gdrivescope
 
-Bun-native TypeScript CLI for Google Drive. Traverses folders into a directed graph, extracts document content to markdown, summarizes/embeds via pluggable LLM + embedding providers, and serves semantic search over a local `bun:sqlite` database with a `sqlite-vec` virtual table.
+Native Rust CLI for Google Drive. Traverses folders into a directed graph, extracts document content to markdown, summarizes/embeds via pluggable LLM + embedding providers, and serves semantic search over a local SQLite database with a `sqlite-vec` virtual table. Single static binary, no runtime libsqlite3 / libpdfium / OpenSSL dependency.
 
 ## Environment variables
 
@@ -37,93 +37,70 @@ Bun-native TypeScript CLI for Google Drive. Traverses folders into a directed gr
 ## Commands
 
 ```bash
-# Setup
-bun install                          # Install dependencies
-task build                           # Compile TypeScript to build/
-task clean                           # Remove build/ and dist/
+# Build
+cargo build                                  # Debug build at target/debug/gdrivescope
+cargo build --release                        # Optimized release build at target/release/gdrivescope (~18 MB)
 
 # Quality
-task lint                            # Lint with Biome
-task format                          # Format with Biome (write)
-task test                            # Run tests (bun test)
-task test:unit                       # Unit tests only
-task test:integration                # Integration tests only
-task check                           # Lint + typecheck + tests
+cargo fmt                                    # Format with rustfmt
+cargo fmt --check                            # Verify formatting (CI gate)
+cargo clippy --all-targets -- -D warnings    # Lint with clippy (CI gate)
+cargo test                                   # Run all tests (113 unit tests)
 
-# Pipelines
-task ci                              # Full CI locally: clean + install + format:check + check + build
-
-# Release
-task compile                         # Build standalone binary for current platform (dist/gdrivescope)
-task compile:all                     # Build binaries for all 6 platforms
+# Local CI equivalent
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cargo build --release
 ```
 
-### macOS binary signing (local compile)
-
-`bun build --compile` on macOS 15+ writes an `LC_CODE_SIGNATURE` load command
-but leaves the signature section malformed. The kernel on macOS Sequoia+ (incl.
-macOS 26 Tahoe) then SIGKILLs the unsigned arm64 binary as soon as it runs —
-`dist/gdrivescope` exits 137 with no error.
-
-`task compile` and `task compile:all` handle this automatically on macOS by
-stripping the placeholder and ad-hoc signing:
-
-```bash
-codesign --remove-signature dist/gdrivescope 2>/dev/null || true
-codesign --force --sign - dist/gdrivescope
-```
-
-GitHub release binaries don't need this step — the `macos-15` runner's linker
-adds the `adhoc,linker-signed` flag automatically during compile. If
-`task compile` ever stops signing, use `codesign -dv dist/gdrivescope` to
-confirm; a signed binary reports `Signature=adhoc`. The Linux/Windows targets
-in `compile:all` are unaffected.
+The `release.yml` workflow builds 6-platform binaries on `v*` tag pushes:
+linux-x64 (musl, fully static), linux-arm64, darwin-x64, darwin-arm64,
+windows-x64, windows-arm64. The `macos-*` runners' linker emits an ad-hoc
+signature automatically (verified by the workflow); no manual `codesign`
+step is needed for release artifacts.
 
 ## Architecture
 
 ```
 src/
-  index.ts       CLI entry: parseArgs + noun-verb dispatch
-  auth/          OAuth 2.0 + PKCE loopback, keychain vault, credential resolution
-  cli/           Noun-verb command registry + per-command implementations
-  config/        TOML workspace config (~/.config/gdrivescope/config.toml)
-  drive/         Google Drive API client, BFS traversal, download/exports, ancestry
-  extract/       Kreuzberg markdown extraction, MIME filtering, PDF slicing
-  formatters/    Human vs JSON output emitter
-  graph/         bun:sqlite store, graphology model, hydration, path helpers
-  llm/           LLM + embedding provider interfaces, implementations, resolvers
-  models/        ApiResponse<T> envelope
-  pipeline/      Index orchestration, bounded concurrency, pruning
-  search/        sqlite-vec kNN query + post-filtering
-  utils/         Config paths, typed errors, logging, interactive prompts
+  main.rs            CLI entry point (#[tokio::main] -> cli::run())
+  lib.rs             Crate root; module re-exports for tests
+  error.rs           CliError + ErrorCode variants
+  models.rs          ApiResponse<T> JSON envelope
+  formatters.rs      Human vs JSON output emitter (set_json_mode + emit)
+  utils.rs           config_dir, db_path helpers
+  config.rs          TOML workspace config (~/.config/gdrivescope/config.toml)
+  extract.rs         Kreuzberg markdown extraction (pdf-oxide backend)
+  search.rs          sqlite-vec kNN query + post-filtering
+  auth/              OAuth 2.0 + PKCE loopback, keyring vault, credential resolution
+  drive/             Google Drive API client, BFS traversal, download/exports, ancestry
+  graph/             rusqlite + sqlite-vec store, graph model, hydration, path helpers
+  llm/               LLM + embedding provider traits, 8 provider impls, resolver
+  pipeline/          Index orchestration, bounded concurrency, pruning
+  cli/               clap-derive Cli + per-command implementations (login, logout,
+                     index, list, show, search, download, config, ollama)
 tests/
-  unit/          Pure logic tests
-  integration/   Cross-module tests with fake providers
-  helpers/       Shared test factories and fakes
-  (e2e/ planned — compiled binary against recorded Drive fixtures)
+  (reserved for future integration tests against recorded Drive fixtures;
+   unit tests live inline in `#[cfg(test)] mod tests` blocks per module)
 ```
 
 ## Conventions
 
-- **Runtime:** Bun, TypeScript strict mode, ES2022, NodeNext modules
-- **Formatting:** Biome (indent 2, single quotes, semicolons, trailing commas es5)
-- **CLI parsing:** `parseArgs` from `node:util`, noun-verb dispatch (no commander/citty)
-- **Credentials:** Bun Secrets API via `src/auth/keychain.ts` — OS keychain, no files
-- **Output:** human-readable default, `--json` flag emits `{ok, data}` / `{ok, error, code}` envelope
-- **Graph:** `graphology` in memory, rehydrated from sqlite on command startup; edges implicit from `parent_id`
-- **Persistence:** single `~/.config/gdrivescope/drive.db` via `bun:sqlite` + `sqlite-vec` virtual table
-- **Document extraction:** `@kreuzberg/wasm` for markdown extraction; system SQLite with extension support required for `sqlite-vec`
-- **Release:** 6-platform GitHub Actions matrix, SHA-pinned actions
+- **Runtime:** Rust 2021 edition, MSRV 1.85 (pinned in `rust-toolchain.toml`)
+- **Async:** tokio multi-thread runtime; bounded concurrency via `Arc<tokio::sync::Semaphore>`
+- **CLI parsing:** `clap` with the `derive` feature; noun-verb dispatch via `Cmd` enum
+- **Credentials:** `keyring` crate (apple-native, windows-native, sync-secret-service); vault JSON layout is byte-equivalent to the previous TS implementation so login state is portable across binaries
+- **Output:** human-readable default; `--json` flag emits `{ok, data}` / `{ok, error, code}` envelope
+- **Persistence:** single `~/.config/gdrivescope/drive.db` via `rusqlite` (bundled SQLite) + `sqlite-vec` virtual table — no system libsqlite3 dependency
+- **Document extraction:** `kreuzberg` crate with the `pdf-oxide` feature — pure-Rust PDF extraction, no libpdfium runtime dependency
+- **HTTP:** `reqwest` with `rustls-tls` (no OpenSSL); 3 Drive REST endpoints called directly
+- **LLM providers:** hand-rolled per-provider modules — Anthropic (tool_use + cache_control), OpenAI (json_schema strict), Azure OpenAI, Ollama (`format` param + retry-on-malformed)
+- **Embedding providers:** OpenAI, Azure OpenAI, Voyage (output_dimension), Ollama
+- **Errors:** `thiserror`-based `CliError` with stable `ErrorCode` variants surfaced through the JSON envelope
+- **Release:** 6-platform GitHub Actions matrix on `v*` tags, SHA-pinned actions
 
 ## Testing
 
-Two active tiers: `tests/unit`, `tests/integration` (plus a planned `tests/e2e` tier against recorded Drive fixtures). See `tests/CLAUDE.md` for helpers and mocking patterns.
+113 unit tests live inline as `#[cfg(test)] mod tests { ... }` blocks within each module. Provider integration uses fakes — no live API calls during tests. Run all tests with `cargo test`. The repo-root `tests/` directory is reserved for future cargo integration tests (e.g. compiled binary against recorded Drive fixtures).
 
 ## See also
 
-- `src/cli/CLAUDE.md` — command contract, dispatch, adding new commands
-- `src/llm/CLAUDE.md` — provider interfaces, resolver cascade, adding providers
-- `src/graph/CLAUDE.md` — SQLite setup, schema, vec0 quirks, graphology hydration
-- `tests/CLAUDE.md` — test tiers, helpers, mocking patterns
 - `.github/CLAUDE.md` — CI workflow, release workflow, SHA pinning
-- `.claude/rules/typescript-style.md` — TypeScript + Biome coding rules

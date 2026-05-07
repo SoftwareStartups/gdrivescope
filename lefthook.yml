@@ -1,11 +1,8 @@
 pre-commit:
   parallel: true
   commands:
-    format:
-      glob: "*.{ts,json,yml,yaml}"
-      run: bunx biome format --no-errors-on-unmatched {staged_files}
-    lint:
-      glob: "*.ts"
-      run: bunx biome lint --no-errors-on-unmatched {staged_files}
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt --check
     gitleaks:
       run: gitleaks git --staged --redact --no-banner

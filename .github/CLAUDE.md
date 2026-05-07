@@ -9,7 +9,7 @@ Format: `uses: owner/action@<full-sha>  # v1.2.3`
 Resolve latest version and SHA:
 
 ```bash
-for repo in actions/checkout actions/upload-artifact actions/download-artifact actions/cache oven-sh/setup-bun; do
+for repo in actions/checkout actions/upload-artifact actions/download-artifact actions/cache; do
   tag=$(gh api "repos/$repo/releases/latest" --jq '.tag_name')
   ref=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object')
   type=$(echo "$ref" | jq -r '.type')
@@ -45,20 +45,25 @@ Applies to **every** `${{ }}` expression used inside a `run:` block — `github.
 
 - Triggers: push to any branch, PRs to `main`
 - Permissions: `contents: read` only
-- Jobs: lint-and-typecheck → build
-- Uses `task` commands for all CI steps
+- Single job: `cargo fmt --check` → `cargo clippy --all-targets -- -D warnings` → `cargo test` → `cargo build --release` → musl `cargo check` smoke test
+- Toolchain pinned via `rust-toolchain.toml`; the runner's pre-installed `rustup` picks it up automatically — no third-party setup action
 
 ## Release Workflow (`workflows/release.yml`)
 
 - Triggers: push of `v*` tags
 - Permissions: `contents: write`, `actions: read`
-- Verifies CI passed for the tagged commit before building
-- 6-platform binary matrix: linux-x64, linux-arm64, darwin-x64, darwin-arm64, windows-x64, windows-arm64
-- Binary naming: `gdrivescope-<os>-<arch>[.exe]`
-- Creates GitHub release with compiled binaries
+- 6-platform binary matrix:
+  - linux-x64 → `x86_64-unknown-linux-musl` (fully static)
+  - linux-arm64 → `aarch64-unknown-linux-gnu`
+  - darwin-x64 → `x86_64-apple-darwin`
+  - darwin-arm64 → `aarch64-apple-darwin`
+  - windows-x64 → `x86_64-pc-windows-msvc`
+  - windows-arm64 → `aarch64-pc-windows-msvc`
+- Binary naming: `gdrivescope-<os>-<arch>[.exe]` archived as `.tar.gz` (Linux/macOS) or `.zip` (Windows)
+- macOS: linker emits `Signature=adhoc` automatically; the workflow asserts it via `codesign -dvv` so the binary doesn't SIGKILL on Sequoia+
+- A final `release` job collects all artifacts, generates `SHA256SUMS.txt`, and publishes a GitHub release with auto-generated notes
 
 ## Custom Actions
 
-### `.github/actions/setup-bun-env/`
-
-Installs Bun and caches dependencies via `bun install --frozen-lockfile`.
+None. The Rust toolchain is provided by the runner's pre-installed `rustup`,
+which respects `rust-toolchain.toml` automatically.
