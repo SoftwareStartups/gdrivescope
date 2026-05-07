@@ -3,16 +3,8 @@ name: CI
 on:
   push:
     branches: ["**"]
-    paths-ignore:
-      - "rust/**"
-      - ".github/workflows/rust-ci.yml"
-      - "docs/plans/**"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "rust/**"
-      - ".github/workflows/rust-ci.yml"
-      - "docs/plans/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,67 +14,37 @@ permissions:
   contents: read
 
 jobs:
-  lint-and-typecheck:
-    name: Lint & Typecheck
+  rust:
+    name: fmt + clippy + test + build
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Setup Bun environment
-        uses: ./.github/actions/setup-bun-env
+      # Toolchain is pinned via rust-toolchain.toml; the runner's pre-installed
+      # rustup picks it up automatically. No third-party action needed (keeps
+      # the SHA-pinning surface minimal).
+      - name: Show toolchain
+        run: rustup show && rustc --version && cargo --version
 
       - name: Format check
-        run: task format:check
+        run: cargo fmt --check
 
-      - name: Lint
-        run: task lint
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
 
-      - name: Typecheck
-        run: task typecheck
+      - name: Test
+        run: cargo test
 
-  unit-tests:
-    name: Unit Tests
-    needs: lint-and-typecheck
-    runs-on: ubuntu-latest
+      - name: Build (release)
+        run: cargo build --release
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Setup Bun environment
-        uses: ./.github/actions/setup-bun-env
-
-      - name: Run unit tests
-        run: task test:unit
-
-  integration-tests:
-    name: Integration Tests
-    needs: lint-and-typecheck
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Setup Bun environment
-        uses: ./.github/actions/setup-bun-env
-
-      - name: Run integration tests
-        run: task test:integration
-
-  build:
-    name: Build
-    needs: lint-and-typecheck
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Setup Bun environment
-        uses: ./.github/actions/setup-bun-env
-
-      - name: Build
-        run: task build
+      # Cross-compile smoke test for the static-musl Linux target. Catches any
+      # dep that doesn't compile under musl before tag time, where the full
+      # release matrix would otherwise be the first warning.
+      - name: Cross-compile check (musl)
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          cargo check --release --target x86_64-unknown-linux-musl

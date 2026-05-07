@@ -5,13 +5,8 @@
 .vscode/
 .idea/
 
-# Dependencies
-node_modules/
-
 # Build output
-build/
-dist/
-*.tsbuildinfo
+target/
 
 # Environment
 .env

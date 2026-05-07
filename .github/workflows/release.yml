@@ -11,88 +11,114 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
-            target: bun-linux-x64
             os: linux
             arch: x64
+            target: x86_64-unknown-linux-musl
             ext: ""
+            archive: tar.gz
+            install_musl: true
           - runner: ubuntu-24.04-arm
-            target: bun-linux-arm64
             os: linux
             arch: arm64
+            target: aarch64-unknown-linux-gnu
             ext: ""
-          - runner: ubuntu-latest
-            target: bun-darwin-x64
+            archive: tar.gz
+            install_musl: false
+          - runner: macos-13
             os: darwin
             arch: x64
+            target: x86_64-apple-darwin
             ext: ""
+            archive: tar.gz
+            install_musl: false
           - runner: macos-15
-            target: bun-darwin-arm64
             os: darwin
             arch: arm64
+            target: aarch64-apple-darwin
             ext: ""
-          - runner: ubuntu-latest
-            target: bun-windows-x64
+            archive: tar.gz
+            install_musl: false
+          - runner: windows-latest
             os: windows
             arch: x64
+            target: x86_64-pc-windows-msvc
             ext: ".exe"
-          - runner: ubuntu-latest
-            target: bun-windows-arm64
+            archive: zip
+            install_musl: false
+          - runner: windows-11-arm
             os: windows
             arch: arm64
+            target: aarch64-pc-windows-msvc
             ext: ".exe"
+            archive: zip
+            install_musl: false
+
     runs-on: ${{ matrix.runner }}
 
     steps:
-      - name: Verify CI passed for this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COMMIT_SHA: ${{ github.sha }}
-          REPO: ${{ github.repository }}
-        run: |
-          echo "Waiting for CI to complete for commit $COMMIT_SHA..."
-          for i in $(seq 1 20); do
-            RUN_ID=$(gh run list \
-              --repo "$REPO" \
-              --commit "$COMMIT_SHA" \
-              --workflow "CI" \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId // empty')
-            if [ -n "$RUN_ID" ]; then
-              break
-            fi
-            echo "CI run not found yet (attempt $i/20). Waiting 15s..."
-            sleep 15
-          done
-          if [ -z "$RUN_ID" ]; then
-            echo "No CI run found for commit $COMMIT_SHA. Aborting release."
-            exit 1
-          fi
-          gh run watch "$RUN_ID" --repo "$REPO" --exit-status
-
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Setup Bun environment
-        uses: ./.github/actions/setup-bun-env
+      # Toolchain comes from rust-toolchain.toml; we add the cross-target.
+      - name: Add target ${{ matrix.target }}
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
 
-      - name: Compile binary
+      - name: Install musl tools (Linux x64 only)
+        if: matrix.install_musl == true
+        shell: bash
         run: |
-          bun build src/index.ts \
-            --compile \
-            --target=${{ matrix.target }} \
-            --outfile gdrivescope-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build release
+        shell: bash
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          mkdir -p staged
+          cp "target/${{ matrix.target }}/release/gdrivescope${{ matrix.ext }}" \
+             "staged/gdrivescope-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+
+      # macOS: confirm cargo's linker emitted an ad-hoc signature so the binary
+      # doesn't SIGKILL on Sequoia+. The macos-* runner's linker signs
+      # automatically; this is just a guard.
+      - name: Verify ad-hoc signature (macOS)
+        if: matrix.os == 'darwin'
+        shell: bash
+        run: |
+          codesign -dvv "staged/gdrivescope-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" 2>&1 | tee codesign.log
+          grep -q "Signature=adhoc" codesign.log
+
+      - name: Archive (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          cd staged
+          tar czf "gdrivescope-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" \
+            "gdrivescope-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+
+      - name: Archive (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path "staged/gdrivescope-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}" `
+            -DestinationPath "staged/gdrivescope-${{ matrix.os }}-${{ matrix.arch }}.zip"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gdrivescope-${{ matrix.os }}-${{ matrix.arch }}
-          path: gdrivescope-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          path: staged/gdrivescope-${{ matrix.os }}-${{ matrix.arch }}.${{ matrix.archive }}
           retention-days: 1
 
   release:
@@ -101,6 +127,9 @@ jobs:
     needs: [build]
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
       - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
