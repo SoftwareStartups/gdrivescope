@@ -22,7 +22,10 @@ pub struct SearchArgs {
     pub threshold: Option<f32>,
     #[arg(long)]
     pub classification: Option<String>,
-    #[arg(long = "type")]
+    #[arg(
+        long = "type",
+        help = "Case-insensitive mime-type substring (e.g. `folder`, `pdf`, `document`, `spreadsheet`, `application/vnd.google-apps.folder`)"
+    )]
     pub kind: Option<String>,
     #[arg(long = "embedding-provider")]
     pub embedding_provider: Option<String>,
@@ -50,7 +53,13 @@ pub async fn execute(args: SearchArgs) -> Result<(), CliError> {
         .as_deref()
         .map(|s| crate::config::resolve_folder(&cfg, s));
 
-    let hits = if store.get_meta("embedding_dims")?.is_some() {
+    // Folders are never embedded (they have no extracted content), so a
+    // `--type folder` query against the kNN index always returns nothing.
+    // Force the lexical path in that case — it iterates all graph nodes
+    // and applies the same substring filter, so it matches folders too.
+    let force_lexical = kind_targets_folders(args.kind.as_deref());
+
+    let hits = if !force_lexical && store.get_meta("embedding_dims")?.is_some() {
         let provider = resolve_embedding_provider(ResolveEmbeddingOptions {
             flag_provider: args.embedding_provider,
             config_provider: cfg.embedding.as_ref().and_then(|c| c.provider.clone()),
@@ -94,4 +103,55 @@ pub async fn execute(args: SearchArgs) -> Result<(), CliError> {
             .join("\n")
     });
     Ok(())
+}
+
+fn kind_targets_folders(kind: Option<&str>) -> bool {
+    kind.map(|k| {
+        matches!(
+            k.to_lowercase().as_str(),
+            "folder" | "application/vnd.google-apps.folder"
+        )
+    })
+    .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kind_targets_folders;
+
+    #[test]
+    fn folder_short_form_targets_folders() {
+        assert!(kind_targets_folders(Some("folder")));
+    }
+
+    #[test]
+    fn folder_match_is_case_insensitive() {
+        assert!(kind_targets_folders(Some("Folder")));
+        assert!(kind_targets_folders(Some("FOLDER")));
+    }
+
+    #[test]
+    fn folder_full_mime_targets_folders() {
+        assert!(kind_targets_folders(Some(
+            "application/vnd.google-apps.folder"
+        )));
+        assert!(kind_targets_folders(Some(
+            "Application/vnd.Google-Apps.Folder"
+        )));
+    }
+
+    #[test]
+    fn other_kinds_do_not_target_folders() {
+        assert!(!kind_targets_folders(Some("pdf")));
+        assert!(!kind_targets_folders(Some("document")));
+        // `application` is a substring of the folder mime but the user
+        // means "all application/* mimes" — must not force lexical.
+        assert!(!kind_targets_folders(Some("application")));
+    }
+
+    #[test]
+    fn none_and_empty_do_not_target_folders() {
+        assert!(!kind_targets_folders(None));
+        assert!(!kind_targets_folders(Some("")));
+    }
 }
