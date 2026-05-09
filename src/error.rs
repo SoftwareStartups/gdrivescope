@@ -28,6 +28,9 @@ pub enum ErrorCode {
     OllamaPullFailed,
     NoEmbeddings,
     VecExtensionFailed,
+    OutputPathInvalid,
+    IoFailed,
+    DownloadTreeFailed,
     Unknown,
 }
 
@@ -58,6 +61,9 @@ impl ErrorCode {
             Self::OllamaPullFailed => "OLLAMA_PULL_FAILED",
             Self::NoEmbeddings => "NO_EMBEDDINGS",
             Self::VecExtensionFailed => "VEC_EXTENSION_FAILED",
+            Self::OutputPathInvalid => "OUTPUT_PATH_INVALID",
+            Self::IoFailed => "IO_FAILED",
+            Self::DownloadTreeFailed => "DOWNLOAD_TREE_FAILED",
             Self::Unknown => "UNKNOWN",
         }
     }
@@ -128,6 +134,9 @@ mod tests {
             (ErrorCode::OllamaPullFailed, "OLLAMA_PULL_FAILED"),
             (ErrorCode::NoEmbeddings, "NO_EMBEDDINGS"),
             (ErrorCode::VecExtensionFailed, "VEC_EXTENSION_FAILED"),
+            (ErrorCode::OutputPathInvalid, "OUTPUT_PATH_INVALID"),
+            (ErrorCode::IoFailed, "IO_FAILED"),
+            (ErrorCode::DownloadTreeFailed, "DOWNLOAD_TREE_FAILED"),
             (ErrorCode::Unknown, "UNKNOWN"),
         ];
         for (code, expected) in cases {
