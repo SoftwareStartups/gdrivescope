@@ -77,8 +77,8 @@ struct RunResult {
     visited: u64,
     folders: u64,
     files: u64,
-    extracted: u64,
     summarized: u64,
+    cached: u64,
     embedded: u64,
     skipped: u64,
     errors: u64,
@@ -195,9 +195,11 @@ pub async fn execute(args: IndexArgs) -> Result<(), CliError> {
         })
         .await?;
 
-        // +1 for the scope emitted ahead of pipeline; chain ancestors counted above.
-        let visited = stats.visited + 1 + ancestry.chain.len() as u64;
-        let folders = stats.folders + 1 + ancestry.chain.len() as u64;
+        // Report counts for the scope subtree only (scope itself + descendants).
+        // Ancestors are visible in `ancestry_path` and aren't part of the
+        // user's mental model of "what was indexed under this folder".
+        let visited = stats.visited + 1;
+        let folders = stats.folders + 1;
 
         // Stamp last_index_run for downstream observability — open a fresh
         // Store handle since the pipeline consumed the previous one.
@@ -235,8 +237,8 @@ pub async fn execute(args: IndexArgs) -> Result<(), CliError> {
             visited,
             folders,
             files: stats.files,
-            extracted: stats.extracted,
             summarized: stats.summarized,
+            cached: stats.cached,
             embedded: stats.embedded,
             skipped: stats.skipped,
             errors: stats.errors,
@@ -319,8 +321,8 @@ fn render_run(r: &RunResult) -> String {
         format!("  root:        {} ({})", r.root_label, r.root_id),
         format!("  folders:     {}", r.folders),
         format!("  files:       {}", r.files),
-        format!("  extracted:   {}", r.extracted),
         format!("  summarized:  {}", r.summarized),
+        format!("  cached:      {}", r.cached),
         format!("  embedded:    {}", r.embedded),
         format!("  skipped:     {}", r.skipped),
         format!("  errors:      {}", r.errors),

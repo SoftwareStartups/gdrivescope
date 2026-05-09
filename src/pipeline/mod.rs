@@ -42,6 +42,7 @@ const DEFAULT_DRIVE_CONCURRENCY: usize = 15;
 const DEFAULT_LLM_CONCURRENCY: usize = 4;
 const DEFAULT_OLLAMA_LLM_CONCURRENCY: usize = 1;
 const TRAVERSE_UPSERT_BATCH: usize = 200;
+const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
 
 pub struct RunIndexOpts {
     pub store: Store,
@@ -72,9 +73,16 @@ pub struct IndexStats {
     pub folders: u64,
     pub files: u64,
     pub skipped_refs: u64,
-    pub extracted: u64,
+    /// Files freshly summarized in *this* run.
     pub summarized: u64,
+    /// Files that hit `AlreadyCached` (content + summary unchanged since
+    /// last run). Counted once per re-run, not in `summarized`.
+    pub cached: u64,
+    /// Vectors written by Stage 4 in this run. May exceed `summarized`
+    /// when a prior run summarised but didn't reach the embedding stage.
     pub embedded: u64,
+    /// Files filtered out: non-extractable mime (e.g. images), or runtime
+    /// skip such as "too large". Folders are *not* counted here.
     pub skipped: u64,
     pub errors: u64,
     pub pruned: u64,
@@ -239,7 +247,7 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
             let outcome = task
                 .await
                 .map_err(|e| CliError::new(format!("process join: {e}"), ErrorCode::Unknown))?;
-            apply_outcome(&opts.store, &mut graph, &mut stats, outcome);
+            apply_outcome(&opts.store, &mut graph, &mut stats, outcome)?;
         }
     }
 
@@ -324,6 +332,11 @@ fn build_work_list(graph: &DriveGraph, scope_set: &HashSet<String>, resume: bool
     let mut skipped: u64 = 0;
     for node in graph.nodes() {
         if !scope_set.contains(&node.id) {
+            continue;
+        }
+        // Folders are not user-visible "skipped files" — they aren't
+        // candidates for extraction. Don't inflate the counter with them.
+        if node.mime_type == FOLDER_MIME {
             continue;
         }
         if !should_extract(&node.mime_type) {
@@ -436,12 +449,20 @@ async fn fetch_and_extract(
     let raw = match tokio::fs::read(&download.output_path).await {
         Ok(b) => b,
         Err(e) => {
+            // Best-effort cleanup of the downloaded file even on read
+            // failure. The TempDir guard is the safety net; this just
+            // shortens its lifetime.
+            let _ = tokio::fs::remove_file(&download.output_path).await;
             return FetchOutcome::Failed(CliError::new(
                 format!("read downloaded file: {e}"),
-                ErrorCode::Unknown,
+                ErrorCode::IoFailed,
             ));
         }
     };
+    // Bytes are now in memory and the file on disk is no longer needed.
+    // Removing per-file keeps the TempDir small over long runs and avoids
+    // building up MB of PDFs in /tmp until pipeline end.
+    let _ = tokio::fs::remove_file(&download.output_path).await;
     let download_mime = download.mime_type.clone();
 
     let markdown = if download_mime == "text/plain" || download_mime == "text/csv" {
@@ -670,7 +691,7 @@ async fn run_batch_summarization(
             },
         };
         let outcome = make_outcome(&node, result);
-        apply_outcome(store, graph, stats, outcome);
+        apply_outcome(store, graph, stats, outcome)?;
     }
 
     Ok(())
@@ -681,12 +702,16 @@ fn apply_outcome(
     graph: &mut DriveGraph,
     stats: &mut IndexStats,
     outcome: ProcessOutcome,
-) {
+) -> Result<(), CliError> {
     match outcome.result {
-        ProcessResult::AlreadyCached => {}
+        ProcessResult::AlreadyCached => {
+            stats.cached += 1;
+        }
         ProcessResult::Skipped(msg) => {
-            stats.errors += 1;
-            let _ = store.record_error(&outcome.node_id, &msg);
+            // Runtime skip (e.g. "too large") — not a hard error, but we
+            // still record the reason so `gdrivescope show` surfaces it.
+            stats.skipped += 1;
+            store.record_error(&outcome.node_id, &msg)?;
         }
         ProcessResult::Failed(ref err) => {
             stats.errors += 1;
@@ -695,7 +720,7 @@ fn apply_outcome(
                 Some(info) => format_marker(&info, &err.message),
                 None => err.message.clone(),
             };
-            let _ = store.record_error(&outcome.node_id, &recorded);
+            store.record_error(&outcome.node_id, &recorded)?;
             let prefix = describe_node(&outcome);
             match info {
                 Some(info) => {
@@ -711,7 +736,6 @@ fn apply_outcome(
             classification,
             key_topics_json,
         } => {
-            stats.extracted += 1;
             let patch = SummaryUpdate {
                 summary: summary.clone(),
                 classification: classification.clone(),
@@ -719,7 +743,7 @@ fn apply_outcome(
                 extracted_md: markdown.clone(),
                 content_hash: hash.clone(),
             };
-            let _ = store.update_summary(&outcome.node_id, &patch);
+            store.update_summary(&outcome.node_id, &patch)?;
             stats.summarized += 1;
             // Mirror in-memory so the embedding phase reads fresh state.
             if let Some(n) = graph.get_mut(&outcome.node_id) {
@@ -732,6 +756,7 @@ fn apply_outcome(
             }
         }
     }
+    Ok(())
 }
 
 fn describe_node(o: &ProcessOutcome) -> String {
@@ -787,7 +812,9 @@ mod tests {
         let wl = build_work_list(&g, &scope, false);
         assert_eq!(wl.work.len(), 1);
         assert_eq!(wl.work[0].id, "a");
-        assert_eq!(wl.skipped, 2);
+        // Only the PNG counts as skipped; folders aren't user-visible files
+        // and don't inflate the counter.
+        assert_eq!(wl.skipped, 1);
     }
 
     #[test]
