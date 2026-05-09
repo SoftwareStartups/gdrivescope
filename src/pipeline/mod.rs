@@ -27,7 +27,7 @@ use crate::error::{CliError, ErrorCode};
 use crate::extract::{extract_to_markdown, should_extract, ExtractOptions};
 use crate::graph::hydrate::hydrate_graph;
 use crate::graph::model::{DriveGraph, DriveNodeInput, Node};
-use crate::graph::paths::node_path;
+use crate::graph::paths::{descendants, node_path};
 use crate::graph::store::{Store, SummaryUpdate};
 use crate::llm::embedding::EmbeddingProvider;
 use crate::llm::provider::{LlmProvider, LlmSummarizeInput};
@@ -128,6 +128,14 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
     // ── Hydrate graph + optional prune ──────────────────────────────────
     let mut graph = hydrate_graph(&opts.store)?;
 
+    // The hydrated graph contains every node ever indexed, across all roots.
+    // Per-file work below must be restricted to the current scope subtree.
+    let scope_set: HashSet<String> = {
+        let mut s = descendants(&graph, &opts.root_id);
+        s.insert(opts.root_id.clone());
+        s
+    };
+
     if opts.prune {
         let to_delete = compute_prune_set(PruneSetInput {
             graph: &graph,
@@ -165,7 +173,7 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
         .tempdir()
         .map_err(|e| CliError::new(format!("tempdir: {e}"), ErrorCode::Unknown))?;
 
-    let work = build_work_list(&graph, opts.resume);
+    let work = build_work_list(&graph, &scope_set, opts.resume);
     stats.skipped += work.skipped;
 
     let process_start = Instant::now();
@@ -290,10 +298,13 @@ struct WorkList {
     skipped: u64,
 }
 
-fn build_work_list(graph: &DriveGraph, resume: bool) -> WorkList {
+fn build_work_list(graph: &DriveGraph, scope_set: &HashSet<String>, resume: bool) -> WorkList {
     let mut work = Vec::new();
     let mut skipped: u64 = 0;
     for node in graph.nodes() {
+        if !scope_set.contains(&node.id) {
+            continue;
+        }
         if !should_extract(&node.mime_type) {
             skipped += 1;
             continue;
@@ -578,13 +589,18 @@ mod tests {
         }
     }
 
+    fn full_scope(g: &DriveGraph) -> HashSet<String> {
+        g.nodes().map(|n| n.id.clone()).collect()
+    }
+
     #[test]
     fn build_work_list_filters_out_unsupported_mimes() {
         let mut g = DriveGraph::new();
         g.add_node(n("a", "application/pdf", None, None));
         g.add_node(n("b", "image/png", None, None));
         g.add_node(n("c", "application/vnd.google-apps.folder", None, None));
-        let wl = build_work_list(&g, false);
+        let scope = full_scope(&g);
+        let wl = build_work_list(&g, &scope, false);
         assert_eq!(wl.work.len(), 1);
         assert_eq!(wl.work[0].id, "a");
         assert_eq!(wl.skipped, 2);
@@ -601,7 +617,8 @@ mod tests {
             Some("[permanent:forbidden] x"),
         ));
         g.add_node(n("retry", "application/pdf", None, Some("transient")));
-        let wl = build_work_list(&g, true);
+        let scope = full_scope(&g);
+        let wl = build_work_list(&g, &scope, true);
         assert_eq!(wl.work.len(), 1);
         assert_eq!(wl.work[0].id, "retry");
     }
@@ -610,7 +627,31 @@ mod tests {
     fn build_work_list_without_resume_includes_done_nodes() {
         let mut g = DriveGraph::new();
         g.add_node(n("done", "application/pdf", Some("S"), None));
-        let wl = build_work_list(&g, false);
+        let scope = full_scope(&g);
+        let wl = build_work_list(&g, &scope, false);
         assert_eq!(wl.work.len(), 1);
+    }
+
+    #[test]
+    fn build_work_list_excludes_nodes_outside_scope_set() {
+        // Two disjoint subtrees in the same DB. Scope only covers subtree A.
+        // Subtree B nodes — even fresh ones with no summary — must be skipped.
+        let mut g = DriveGraph::new();
+        g.add_node(n("a-pdf", "application/pdf", None, None));
+        g.add_node(n("a-doc", "application/pdf", Some("cached"), None));
+        g.add_node(n("b-pdf-fresh", "application/pdf", None, None));
+        g.add_node(n("b-pdf-with-summary", "application/pdf", Some("S"), None));
+
+        let scope: HashSet<String> = ["a-pdf", "a-doc"].iter().map(|s| s.to_string()).collect();
+
+        let wl = build_work_list(&g, &scope, false);
+        let ids: HashSet<String> = wl.work.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(
+            ids,
+            ["a-pdf", "a-doc"].iter().map(|s| s.to_string()).collect(),
+        );
+        // Out-of-scope nodes are skipped silently — they shouldn't inflate the
+        // unsupported-mime counter.
+        assert_eq!(wl.skipped, 0);
     }
 }
