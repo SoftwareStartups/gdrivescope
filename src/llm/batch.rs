@@ -5,9 +5,12 @@
 use std::future::Future;
 use std::time::Instant;
 
+use async_trait::async_trait;
+use serde_json::Value;
+
 use crate::error::{CliError, ErrorCode};
 
-use super::provider::BatchOptions;
+use super::provider::{BatchOptions, LlmSummarizeInput, LlmSummary};
 
 /// Build the `custom_id` for input slot `i`. Monotonic indices avoid
 /// collisions and round-trip cleanly through Anthropic's
@@ -66,6 +69,124 @@ where
 /// Split a JSONL response body into trimmed, non-empty lines.
 pub fn split_jsonl(body: &str) -> impl Iterator<Item = &str> {
     body.lines().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Parse a JSONL batch results body into per-input result slots.
+///
+/// Each line must carry a `custom_id` produced by [`make_custom_id`]; the
+/// index decoded from it determines the output slot. `extract` decides
+/// whether the line is a per-item success (returns `Ok(LlmSummary)`) or a
+/// per-item failure (returns `Err(CliError)`); both outcomes land in the
+/// returned `Vec<Result<…>>`. Missing slots, duplicate slots, malformed
+/// JSON, missing/unrecognized/out-of-range `custom_id` values map to an
+/// outer `Err(LlmBatchPollFailed)` — they signal a broken batch envelope,
+/// not a per-item failure.
+pub fn parse_batch_jsonl<F>(
+    label: &str,
+    body: &str,
+    expected_len: usize,
+    extract: F,
+) -> Result<Vec<Result<LlmSummary, CliError>>, CliError>
+where
+    F: Fn(&Value) -> Result<LlmSummary, CliError>,
+{
+    let mut out: Vec<Option<Result<LlmSummary, CliError>>> =
+        (0..expected_len).map(|_| None).collect();
+    for line in split_jsonl(body) {
+        let v: Value = serde_json::from_str(line).map_err(|e| {
+            CliError::new(
+                format!("{label} batch results parse failed: {e}"),
+                ErrorCode::LlmBatchPollFailed,
+            )
+        })?;
+        let custom_id = v.get("custom_id").and_then(|x| x.as_str()).ok_or_else(|| {
+            CliError::new(
+                format!("{label} batch result line missing custom_id"),
+                ErrorCode::LlmBatchPollFailed,
+            )
+        })?;
+        let idx = parse_custom_id(custom_id).ok_or_else(|| {
+            CliError::new(
+                format!("{label} batch returned unrecognized custom_id: {custom_id}"),
+                ErrorCode::LlmBatchPollFailed,
+            )
+        })?;
+        if idx >= expected_len {
+            return Err(CliError::new(
+                format!("{label} batch returned out-of-range custom_id: {custom_id}"),
+                ErrorCode::LlmBatchPollFailed,
+            ));
+        }
+        out[idx] = Some(extract(&v));
+    }
+
+    out.into_iter()
+        .enumerate()
+        .map(|(i, slot)| {
+            slot.ok_or_else(|| {
+                CliError::new(
+                    format!("{label} batch did not return a result for input {i}"),
+                    ErrorCode::LlmBatchPollFailed,
+                )
+            })
+        })
+        .collect()
+}
+
+/// Provider-specific hooks for a Batch API. `run_batch` owns the shared
+/// submit → poll → fetch → parse shape; this trait encodes only what
+/// differs between providers.
+///
+/// `SubmitHandle` is whatever the provider needs to poll status (typically
+/// a batch id or a status URL). `FetchHandle` is whatever it needs to
+/// download results once polling reports terminal success (an
+/// `output_file_id`, a `results_url`, etc.).
+#[async_trait]
+pub trait BatchOps: Send + Sync {
+    type SubmitHandle: Send + Sync;
+    type FetchHandle: Send + Sync;
+
+    /// Human-readable provider label used in error messages and
+    /// `parse_batch_jsonl`.
+    fn label(&self) -> &'static str;
+
+    /// Submit `inputs` as one provider-side batch. Returns whatever handle
+    /// `poll` needs to check status.
+    async fn submit(&self, inputs: &[LlmSummarizeInput]) -> Result<Self::SubmitHandle, CliError>;
+
+    /// Check status once. Return `InProgress` to keep polling, `Done` with
+    /// the fetch handle when terminal-success, or `Failed` for terminal-
+    /// failure (the surrounding `poll_until_done` propagates `Failed` as
+    /// the outer error).
+    async fn poll(
+        &self,
+        handle: &Self::SubmitHandle,
+    ) -> Result<PollState<Self::FetchHandle>, CliError>;
+
+    /// Download the JSONL results body.
+    async fn fetch(&self, handle: &Self::FetchHandle) -> Result<String, CliError>;
+
+    /// Decode one parsed JSONL line into either an `LlmSummary` (per-item
+    /// success) or a `CliError` (per-item failure). Outer `parse_batch_jsonl`
+    /// already handles missing `custom_id`, malformed JSON, and slot
+    /// allocation.
+    fn parse_line(&self, line: &Value) -> Result<LlmSummary, CliError>;
+}
+
+/// Drive a Batch API end-to-end: submit, poll until terminal, fetch
+/// JSONL, and demultiplex per-item results.
+pub async fn run_batch<O: BatchOps>(
+    ops: &O,
+    inputs: &[LlmSummarizeInput],
+    opts: &BatchOptions,
+) -> Result<Vec<Result<LlmSummary, CliError>>, CliError> {
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let submit_handle = ops.submit(inputs).await?;
+    let fetch_handle = poll_until_done(ops.label(), opts, || ops.poll(&submit_handle)).await?;
+    let body = ops.fetch(&fetch_handle).await?;
+    parse_batch_jsonl(ops.label(), &body, inputs.len(), |v| ops.parse_line(v))
 }
 
 #[cfg(test)]

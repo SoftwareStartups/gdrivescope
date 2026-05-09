@@ -33,6 +33,7 @@ Native Rust CLI for Google Drive. Traverses folders into a directed graph, extra
 | `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS` | Ollama embedding vector size |
 | `GDRIVESCOPE_MAX_SIZE` | Default `--max-size` value (bytes) |
 | `GDRIVESCOPE_MAX_PDF_PAGES` | Default `--max-pdf-pages` value |
+| `GDRIVESCOPE_LLM_BATCH_TIMEOUT_SECS` | Default `--batch-timeout-secs` value (default 1800) |
 
 ## Commands
 

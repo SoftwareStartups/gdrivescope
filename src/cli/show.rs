@@ -3,12 +3,11 @@ use serde::Serialize;
 
 use crate::error::{CliError, ErrorCode};
 use crate::formatters::emit;
-use crate::graph::hydrate::hydrate_graph;
 use crate::graph::model::Node;
 use crate::graph::paths::node_path;
-use crate::graph::store::Store;
 use crate::models::{success, ApiResponse};
-use crate::utils::db_path;
+
+use super::CommandContext;
 
 #[derive(Args, Debug, Clone)]
 pub struct ShowArgs {
@@ -27,12 +26,12 @@ pub async fn execute(args: ShowArgs) -> Result<(), CliError> {
     let id = args
         .id
         .ok_or_else(|| CliError::new("show: <id> is required", ErrorCode::MissingArg))?;
-    let store = Store::open(&db_path()?)?;
-    let graph = hydrate_graph(&store)?;
-    let node = store
+    let ctx = CommandContext::open()?;
+    let node = ctx
+        .store
         .get_node(&id)?
         .ok_or_else(|| CliError::new(format!("Node not found: {id}"), ErrorCode::NodeNotFound))?;
-    let path = node_path(&graph, &id);
+    let path = node_path(&ctx.graph, &id);
     let data = ShowData { node, path };
     let resp: ApiResponse<ShowData> = success(data);
     emit(&resp, |d| {

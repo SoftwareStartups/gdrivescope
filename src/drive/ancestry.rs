@@ -75,7 +75,7 @@ pub async fn resolve_ancestry(
             root_id: scope_real_id.clone(),
             root_label: label,
             chain: Vec::new(),
-            scope: file_to_node_input(&scope_file, None, Some(&scope_real_id)),
+            scope: file_to_node_input(&scope_file, None, Some(&scope_real_id))?,
             used_fallback: true,
         });
     }
@@ -91,7 +91,7 @@ pub async fn resolve_ancestry(
             root_id: scope_real_id.clone(),
             root_label: label.clone(),
             chain: Vec::new(),
-            scope: scope_node_with_label(&scope_file, None, &scope_real_id, &label),
+            scope: scope_node_with_label(&scope_file, None, &scope_real_id, &label)?,
             used_fallback: false,
         });
     }
@@ -129,7 +129,7 @@ pub async fn resolve_ancestry(
             root_id: scope_real_id.clone(),
             root_label: label,
             chain: Vec::new(),
-            scope: file_to_node_input(&scope_file, None, Some(&scope_real_id)),
+            scope: file_to_node_input(&scope_file, None, Some(&scope_real_id))?,
             used_fallback: true,
         });
     };
@@ -157,8 +157,8 @@ pub async fn resolve_ancestry(
             None
         };
         let node = match label {
-            Some(l) => scope_node_with_label(folder, parent_id.as_deref(), &matched_root_id, l),
-            None => file_to_node_input(folder, parent_id.as_deref(), Some(&matched_root_id)),
+            Some(l) => scope_node_with_label(folder, parent_id.as_deref(), &matched_root_id, l)?,
+            None => file_to_node_input(folder, parent_id.as_deref(), Some(&matched_root_id))?,
         };
         chain.push(node);
         let _ = i; // silence unused-binding warning when reverse iterating
@@ -173,7 +173,7 @@ pub async fn resolve_ancestry(
             &scope_file,
             scope_parent_id.as_deref(),
             Some(&matched_root_id),
-        ),
+        )?,
         used_fallback: false,
     })
 }
@@ -183,10 +183,10 @@ fn scope_node_with_label(
     parent_id: Option<&str>,
     root_id: &str,
     label: &str,
-) -> DriveNodeInput {
-    let mut node = file_to_node_input(file, parent_id, Some(root_id));
+) -> Result<DriveNodeInput, CliError> {
+    let mut node = file_to_node_input(file, parent_id, Some(root_id))?;
     node.name = label.to_string();
-    node
+    Ok(node)
 }
 
 #[cfg(test)]

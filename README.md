@@ -229,7 +229,7 @@ label = "Team Drive"
 --rebuild-embeddings         Drop + recreate the vector table
 --max-size <BYTES>           Skip files larger than this (default 20 MB)
 --max-pdf-pages <N>          Slice PDFs to first N pages (default 10)
---batch-timeout-secs <N>     Max wait for a provider's async batch (Anthropic / OpenAI / Azure OpenAI; ignored for Ollama; default 1800)
+--batch-timeout-secs <N>     Max wait for a provider's async batch (Anthropic / OpenAI / Azure OpenAI; ignored for Ollama; default 1800; env: GDRIVESCOPE_LLM_BATCH_TIMEOUT_SECS)
 ```
 
 ## Download flags

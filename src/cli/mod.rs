@@ -1,8 +1,13 @@
 use clap::{Parser, Subcommand};
 
+use crate::config::{load_workspace_config, WorkspaceConfig};
 use crate::error::{CliError, ErrorCode};
 use crate::formatters::{emit, set_json_mode};
+use crate::graph::hydrate::hydrate_graph;
+use crate::graph::model::DriveGraph;
+use crate::graph::store::Store;
 use crate::models::{to_response, ApiResponse};
+use crate::utils::db_path;
 
 pub mod config;
 pub mod download;
@@ -13,6 +18,30 @@ pub mod logout;
 pub mod ollama;
 pub mod search;
 pub mod show;
+
+/// Standard bootstrap for read-only commands that need the persistent
+/// store, the in-memory graph, and the workspace config. Config errors
+/// are silently coerced to defaults — commands that need an explicit
+/// config (the `config` subcommand itself) should call
+/// `crate::config::load_workspace_config` directly.
+pub struct CommandContext {
+    pub store: Store,
+    pub graph: DriveGraph,
+    pub config: WorkspaceConfig,
+}
+
+impl CommandContext {
+    pub fn open() -> Result<Self, CliError> {
+        let config = load_workspace_config().unwrap_or_default();
+        let store = Store::open(&db_path()?)?;
+        let graph = hydrate_graph(&store)?;
+        Ok(Self {
+            store,
+            graph,
+            config,
+        })
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -26,10 +55,6 @@ struct Cli {
     /// Emit structured JSON responses
     #[arg(long, global = true)]
     json: bool,
-
-    /// Increase log verbosity (-d, -dd)
-    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
-    debug: u8,
 
     #[command(subcommand)]
     cmd: Cmd,

@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::batch::{make_custom_id, parse_custom_id, poll_until_done, split_jsonl, PollState};
-use super::http::{post_json, Auth, ErrorMapping};
+use super::batch::{make_custom_id, run_batch, BatchOps, PollState};
+use super::http::{post_json, Auth, LLM_BATCH_SUBMIT_ERROR_MAP, LLM_CALL_ERROR_MAP};
 use super::prompts::{summary_user, SUMMARY_SYSTEM};
 use super::provider::{BatchOptions, LlmProvider, LlmSummarizeInput, LlmSummary};
 use super::schema::llm_summary_schema;
@@ -46,8 +46,6 @@ struct BatchObject {
     status: String,
     #[serde(default)]
     output_file_id: Option<String>,
-    #[serde(default)]
-    error_file_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,22 +121,6 @@ impl AzureOpenaiProvider {
     }
 }
 
-fn err_map() -> ErrorMapping {
-    ErrorMapping {
-        call: ErrorCode::LlmCallFailed,
-        parse: ErrorCode::LlmMalformedOutput,
-        unreachable: None,
-    }
-}
-
-fn submit_err_map() -> ErrorMapping {
-    ErrorMapping {
-        call: ErrorCode::LlmBatchSubmitFailed,
-        parse: ErrorCode::LlmBatchSubmitFailed,
-        unreachable: None,
-    }
-}
-
 fn parse_chat_content(label: &str, content: &str) -> Result<LlmSummary, CliError> {
     let parsed: Value = serde_json::from_str(content).map_err(|e| {
         CliError::new(
@@ -193,7 +175,7 @@ impl LlmProvider for AzureOpenaiProvider {
             &[],
             &self.chat_body(input),
             "Azure OpenAI",
-            &err_map(),
+            &LLM_CALL_ERROR_MAP,
         )
         .await?;
         let text = chat
@@ -215,12 +197,22 @@ impl LlmProvider for AzureOpenaiProvider {
         inputs: &[LlmSummarizeInput],
         opts: &BatchOptions,
     ) -> Result<Vec<Result<LlmSummary, CliError>>, CliError> {
-        if inputs.is_empty() {
-            return Ok(Vec::new());
-        }
+        run_batch(self, inputs, opts).await
+    }
+}
 
-        // Build JSONL — note the URL inside each line points at the
-        // deployment-scoped chat completions path.
+#[async_trait]
+impl BatchOps for AzureOpenaiProvider {
+    type SubmitHandle = String;
+    type FetchHandle = String;
+
+    fn label(&self) -> &'static str {
+        "Azure OpenAI"
+    }
+
+    async fn submit(&self, inputs: &[LlmSummarizeInput]) -> Result<Self::SubmitHandle, CliError> {
+        // The URL inside each JSONL line points at the deployment-scoped
+        // chat completions path.
         let inner_url = format!("/openai/deployments/{}/chat/completions", self.deployment);
         let mut jsonl = String::new();
         for (i, input) in inputs.iter().enumerate() {
@@ -239,7 +231,6 @@ impl LlmProvider for AzureOpenaiProvider {
             jsonl.push('\n');
         }
 
-        // Upload via /openai/files
         let files_url = self.url("/files");
         let form = reqwest::multipart::Form::new()
             .text("purpose", "batch")
@@ -283,7 +274,6 @@ impl LlmProvider for AzureOpenaiProvider {
             )
         })?;
 
-        // Create batch
         let create_url = self.url("/batches");
         let created: BatchCreateResponse = post_json(
             &self.http,
@@ -296,61 +286,64 @@ impl LlmProvider for AzureOpenaiProvider {
                 "completion_window": "24h",
             }),
             "Azure OpenAI batch",
-            &submit_err_map(),
+            &LLM_BATCH_SUBMIT_ERROR_MAP,
         )
         .await?;
+        Ok(created.id)
+    }
 
-        // Poll until terminal
-        let status_url = self.url(&format!("/batches/{}", created.id));
-        let final_batch: BatchObject = poll_until_done("Azure OpenAI", opts, || async {
-            let resp = self
-                .http
-                .get(&status_url)
-                .header("api-key", &self.api_key)
-                .send()
-                .await
-                .map_err(|e| {
-                    CliError::new(
-                        format!("Azure OpenAI batch poll failed: {e}"),
-                        ErrorCode::LlmBatchPollFailed,
-                    )
-                })?;
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                return Ok(PollState::Failed(CliError::new(
-                    format!("Azure OpenAI batch poll failed (status {status}): {text}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )));
-            }
-            let body: BatchObject = resp.json().await.map_err(|e| {
+    async fn poll(
+        &self,
+        batch_id: &Self::SubmitHandle,
+    ) -> Result<PollState<Self::FetchHandle>, CliError> {
+        let status_url = self.url(&format!("/batches/{batch_id}"));
+        let resp = self
+            .http
+            .get(&status_url)
+            .header("api-key", &self.api_key)
+            .send()
+            .await
+            .map_err(|e| {
                 CliError::new(
-                    format!("Azure OpenAI batch poll parse failed: {e}"),
+                    format!("Azure OpenAI batch poll failed: {e}"),
                     ErrorCode::LlmBatchPollFailed,
                 )
             })?;
-            match body.status.as_str() {
-                "completed" => Ok(PollState::Done(body)),
-                "failed" | "expired" | "cancelled" => Ok(PollState::Failed(CliError::new(
-                    format!("Azure OpenAI batch ended with status {}", body.status),
-                    ErrorCode::LlmBatchSubmitFailed,
-                ))),
-                _ => Ok(PollState::InProgress),
-            }
-        })
-        .await?;
-
-        let output_id = final_batch.output_file_id.ok_or_else(|| {
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Ok(PollState::Failed(CliError::new(
+                format!("Azure OpenAI batch poll failed (status {status}): {text}"),
+                ErrorCode::LlmBatchPollFailed,
+            )));
+        }
+        let body: BatchObject = resp.json().await.map_err(|e| {
             CliError::new(
-                "Azure OpenAI batch completed without output_file_id",
+                format!("Azure OpenAI batch poll parse failed: {e}"),
                 ErrorCode::LlmBatchPollFailed,
             )
         })?;
+        match body.status.as_str() {
+            "completed" => {
+                let output_id = body.output_file_id.ok_or_else(|| {
+                    CliError::new(
+                        "Azure OpenAI batch completed without output_file_id",
+                        ErrorCode::LlmBatchPollFailed,
+                    )
+                })?;
+                Ok(PollState::Done(output_id))
+            }
+            "failed" | "expired" | "cancelled" => Ok(PollState::Failed(CliError::new(
+                format!("Azure OpenAI batch ended with status {}", body.status),
+                ErrorCode::LlmBatchSubmitFailed,
+            ))),
+            _ => Ok(PollState::InProgress),
+        }
+    }
 
-        // Fetch JSONL output
+    async fn fetch(&self, output_id: &Self::FetchHandle) -> Result<String, CliError> {
         let content_url = self.url(&format!("/files/{output_id}/content"));
-        let body = self
-            .http
+        self.http
             .get(&content_url)
             .header("api-key", &self.api_key)
             .send()
@@ -369,65 +362,20 @@ impl LlmProvider for AzureOpenaiProvider {
                     format!("Azure OpenAI batch results read failed: {e}"),
                     ErrorCode::LlmBatchPollFailed,
                 )
-            })?;
+            })
+    }
 
-        let _ = final_batch.error_file_id;
-
-        let mut out: Vec<Option<Result<LlmSummary, CliError>>> =
-            (0..inputs.len()).map(|_| None).collect();
-        for line in split_jsonl(&body) {
-            let v: Value = serde_json::from_str(line).map_err(|e| {
-                CliError::new(
-                    format!("Azure OpenAI batch results parse failed: {e}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            let custom_id = v.get("custom_id").and_then(|x| x.as_str()).ok_or_else(|| {
-                CliError::new(
-                    "Azure OpenAI batch result line missing custom_id",
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            let idx = parse_custom_id(custom_id).ok_or_else(|| {
-                CliError::new(
-                    format!("Azure OpenAI batch returned unrecognized custom_id: {custom_id}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            if idx >= out.len() {
+    fn parse_line(&self, v: &Value) -> Result<LlmSummary, CliError> {
+        if let Some(err) = v.get("error") {
+            if !err.is_null() {
+                let msg = serde_json::to_string(err).unwrap_or_else(|_| "error".into());
                 return Err(CliError::new(
-                    format!("Azure OpenAI batch returned out-of-range custom_id: {custom_id}"),
-                    ErrorCode::LlmBatchPollFailed,
+                    format!("Azure OpenAI batch item errored: {msg}"),
+                    ErrorCode::LlmCallFailed,
                 ));
             }
-
-            let item: Result<LlmSummary, CliError> = if let Some(err) = v.get("error") {
-                if !err.is_null() {
-                    let msg = serde_json::to_string(err).unwrap_or_else(|_| "error".into());
-                    Err(CliError::new(
-                        format!("Azure OpenAI batch item errored: {msg}"),
-                        ErrorCode::LlmCallFailed,
-                    ))
-                } else {
-                    extract_response("Azure OpenAI", &v)
-                }
-            } else {
-                extract_response("Azure OpenAI", &v)
-            };
-            out[idx] = Some(item);
         }
-
-        out.into_iter()
-            .enumerate()
-            .map(|(i, slot)| {
-                slot.ok_or_else(|| {
-                    CliError::new(
-                        format!("Azure OpenAI batch did not return a result for input {i}"),
-                        ErrorCode::LlmBatchPollFailed,
-                    )
-                })
-            })
-            .collect()
+        extract_response("Azure OpenAI", v)
     }
 }
 

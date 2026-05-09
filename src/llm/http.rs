@@ -30,6 +30,30 @@ pub struct ErrorMapping {
     pub unreachable: Option<(ErrorCode, String)>,
 }
 
+/// Standard error mapping for synchronous chat/completion calls.
+pub const LLM_CALL_ERROR_MAP: ErrorMapping = ErrorMapping {
+    call: ErrorCode::LlmCallFailed,
+    parse: ErrorCode::LlmMalformedOutput,
+    unreachable: None,
+};
+
+/// Standard error mapping for batch submission HTTP calls (file upload,
+/// batch creation, status polling). Parse failures collapse into the same
+/// code as call failures because they all signal a broken submit pipeline.
+pub const LLM_BATCH_SUBMIT_ERROR_MAP: ErrorMapping = ErrorMapping {
+    call: ErrorCode::LlmBatchSubmitFailed,
+    parse: ErrorCode::LlmBatchSubmitFailed,
+    unreachable: None,
+};
+
+/// Standard error mapping for embedding calls. Embedding providers
+/// collapse parse failures into the same code as call failures.
+pub const EMBED_CALL_ERROR_MAP: ErrorMapping = ErrorMapping {
+    call: ErrorCode::EmbedCallFailed,
+    parse: ErrorCode::EmbedCallFailed,
+    unreachable: None,
+};
+
 /// POST `body` as JSON to `url` with the given auth, parse the JSON
 /// response into `R`, and map transport / status / parse failures to
 /// typed `CliError`s.

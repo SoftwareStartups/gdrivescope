@@ -6,8 +6,10 @@ use serde_json::json;
 
 use super::embed_batch::{batch_embed, validate_probe_dimensions, ProbeOptions};
 use super::embedding::EmbeddingProvider;
-use super::http::{post_json, Auth, ErrorMapping};
-use crate::error::{CliError, ErrorCode};
+use super::http::{post_json, Auth, EMBED_CALL_ERROR_MAP};
+use crate::error::CliError;
+#[cfg(test)]
+use crate::error::ErrorCode;
 
 const VOYAGE_API: &str = "https://api.voyageai.com/v1/embeddings";
 const BATCH: usize = 128;
@@ -64,11 +66,6 @@ impl VoyageEmbeddingProvider {
     }
 
     async fn call(&self, body: &serde_json::Value) -> Result<VoyageResponse, CliError> {
-        let map = ErrorMapping {
-            call: ErrorCode::EmbedCallFailed,
-            parse: ErrorCode::EmbedCallFailed,
-            unreachable: None,
-        };
         post_json(
             &self.http,
             &self.base_url,
@@ -76,7 +73,7 @@ impl VoyageEmbeddingProvider {
             &[],
             body,
             "Voyage embedding",
-            &map,
+            &EMBED_CALL_ERROR_MAP,
         )
         .await
     }

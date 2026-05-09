@@ -103,15 +103,86 @@ impl IndexStats {
 pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliError> {
     let mut stats = IndexStats::default();
 
-    // ── Stage 1: traverse + upsert ──────────────────────────────────────
+    let seen_ids = stage_traverse_and_upsert(
+        &opts.store,
+        &opts.client,
+        &opts.root_id,
+        opts.anchor_root_id.as_deref(),
+        opts.scope_node.clone(),
+        opts.drive_concurrency,
+        &mut stats,
+    )
+    .await?;
+
+    let (mut graph, scope_set) = stage_hydrate_and_prune(
+        &opts.store,
+        &opts.root_id,
+        opts.prune,
+        &seen_ids,
+        &mut stats,
+    )?;
+
+    let Some(llm) = opts.llm.clone() else {
+        return Ok(stats);
+    };
+    if opts.metadata_only {
+        return Ok(stats);
+    }
+
+    // Probe embedding provider to fail-fast on dim mismatch before paying
+    // any LLM spend.
+    if let Some(emb) = &opts.embedding {
+        emb.probe().await?;
+    }
+
+    stage_process(
+        &opts.store,
+        &opts.client,
+        llm,
+        &mut graph,
+        &scope_set,
+        opts.max_size_bytes,
+        opts.max_pdf_pages,
+        opts.drive_concurrency,
+        opts.llm_concurrency,
+        opts.resume,
+        &opts.batch_options,
+        &mut stats,
+    )
+    .await?;
+
+    if let Some(embedding) = opts.embedding.as_ref() {
+        stage_embed(
+            &opts.store,
+            embedding.as_ref(),
+            &mut graph,
+            &scope_set,
+            opts.rebuild_embeddings,
+            &mut stats,
+        )
+        .await?;
+    }
+
+    Ok(stats)
+}
+
+async fn stage_traverse_and_upsert(
+    store: &Store,
+    client: &DriveClient,
+    root_id: &str,
+    anchor_root_id: Option<&str>,
+    scope_node: Option<DriveNodeInput>,
+    drive_concurrency: Option<usize>,
+    stats: &mut IndexStats,
+) -> Result<HashSet<String>, CliError> {
     let (tx, mut rx) = mpsc::channel::<DriveNodeInput>(256);
     let traverse_opts = TraverseOptions {
-        root_id: opts.root_id.clone(),
-        anchor_root_id: opts.anchor_root_id.clone(),
-        scope_node: opts.scope_node.clone(),
-        concurrency: opts.drive_concurrency,
+        root_id: root_id.to_string(),
+        anchor_root_id: anchor_root_id.map(str::to_string),
+        scope_node,
+        concurrency: drive_concurrency,
     };
-    let traverse_client = opts.client.clone();
+    let traverse_client = client.clone();
     let traverse_handle: tokio::task::JoinHandle<Result<TraverseResult, CliError>> = tokio::spawn(
         async move { traverse_drive_folder(&traverse_client, traverse_opts, tx).await },
     );
@@ -123,68 +194,84 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
         seen_ids.insert(node.id.clone());
         buffer.push(node);
         if buffer.len() >= TRAVERSE_UPSERT_BATCH {
-            opts.store.upsert_nodes(&buffer)?;
+            store.upsert_nodes(&buffer)?;
             buffer.clear();
         }
     }
     if !buffer.is_empty() {
-        opts.store.upsert_nodes(&buffer)?;
+        store.upsert_nodes(&buffer)?;
     }
     let traverse_result = traverse_handle
         .await
         .map_err(|e| CliError::new(format!("traversal join: {e}"), ErrorCode::Unknown))??;
     stats.merge_traverse(&traverse_result);
     stats.traverse_ms = traverse_start.elapsed().as_millis();
+    Ok(seen_ids)
+}
 
-    // ── Hydrate graph + optional prune ──────────────────────────────────
-    let mut graph = hydrate_graph(&opts.store)?;
+fn stage_hydrate_and_prune(
+    store: &Store,
+    root_id: &str,
+    prune: bool,
+    seen_ids: &HashSet<String>,
+    stats: &mut IndexStats,
+) -> Result<(DriveGraph, HashSet<String>), CliError> {
+    let graph = hydrate_graph(store)?;
 
     // The hydrated graph contains every node ever indexed, across all roots.
     // Per-file work below must be restricted to the current scope subtree.
     let scope_set: HashSet<String> = {
-        let mut s = descendants(&graph, &opts.root_id);
-        s.insert(opts.root_id.clone());
+        let mut s = descendants(&graph, root_id);
+        s.insert(root_id.to_string());
         s
     };
 
-    if opts.prune {
+    if prune {
         let to_delete = compute_prune_set(PruneSetInput {
             graph: &graph,
-            seen_ids: &seen_ids,
-            scope_id: Some(opts.root_id.as_str()),
+            seen_ids,
+            scope_id: Some(root_id),
         });
         if !to_delete.is_empty() {
-            opts.store.delete_nodes(&to_delete)?;
+            store.delete_nodes(&to_delete)?;
             stats.pruned = to_delete.len() as u64;
         }
     }
 
-    if opts.metadata_only || opts.llm.is_none() {
-        return Ok(stats);
-    }
+    Ok((graph, scope_set))
+}
 
-    // Probe embedding provider to fail-fast on dim mismatch before paying
-    // any LLM spend.
-    if let Some(emb) = &opts.embedding {
-        emb.probe().await?;
+#[allow(clippy::too_many_arguments)]
+async fn stage_process(
+    store: &Store,
+    client: &DriveClient,
+    llm: Arc<dyn LlmProvider>,
+    graph: &mut DriveGraph,
+    scope_set: &HashSet<String>,
+    max_size_bytes: u64,
+    max_pdf_pages: usize,
+    drive_concurrency: Option<usize>,
+    llm_concurrency: Option<usize>,
+    resume: bool,
+    batch_options: &BatchOptions,
+    stats: &mut IndexStats,
+) -> Result<(), CliError> {
+    let drive_conc = drive_concurrency.unwrap_or(DEFAULT_DRIVE_CONCURRENCY);
+    let llm_conc = resolve_llm_concurrency(llm.as_ref(), llm_concurrency);
+    if llm.name() == "ollama" && llm_concurrency.is_some_and(|n| n > 1) {
+        eprintln!(
+            "info: index: --concurrency-llm={llm_conc} against Ollama; the local model usually serializes inference per request, so >1 mostly adds queueing latency.",
+        );
     }
-
-    let llm = opts
-        .llm
-        .as_ref()
-        .expect("llm presence checked above")
-        .clone();
-    let drive_concurrency = opts.drive_concurrency.unwrap_or(DEFAULT_DRIVE_CONCURRENCY);
-    let llm_concurrency = resolve_llm_concurrency(llm.as_ref(), opts.llm_concurrency);
-    let drive_sem = Arc::new(Semaphore::new(drive_concurrency.max(1)));
-    let llm_sem = Arc::new(Semaphore::new(llm_concurrency.max(1)));
+    let drive_sem = Arc::new(Semaphore::new(drive_conc.max(1)));
+    let llm_sem = Arc::new(Semaphore::new(llm_conc.max(1)));
 
     let workdir = tempfile::Builder::new()
         .prefix("gdrivescope-")
         .tempdir()
         .map_err(|e| CliError::new(format!("tempdir: {e}"), ErrorCode::Unknown))?;
 
-    let work = build_work_list(&graph, &scope_set, opts.resume);
+    let work = build_work_list(graph, scope_set, resume);
     stats.skipped += work.skipped;
     stats.cached += work.cached;
 
@@ -197,7 +284,7 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
         .work
         .into_iter()
         .map(|n| {
-            let p = node_path(&graph, &n.id);
+            let p = node_path(graph, &n.id);
             (n, p)
         })
         .collect();
@@ -205,16 +292,16 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
     if llm.supports_batch() {
         run_batch_summarization(
             work_with_paths,
-            opts.client.clone(),
-            llm.clone(),
-            drive_sem.clone(),
+            client.clone(),
+            llm,
+            drive_sem,
             workdir.path().to_path_buf(),
-            opts.max_size_bytes,
-            opts.max_pdf_pages,
-            &opts.batch_options,
-            &opts.store,
-            &mut graph,
-            &mut stats,
+            max_size_bytes,
+            max_pdf_pages,
+            batch_options,
+            store,
+            graph,
+            stats,
         )
         .await?;
     } else {
@@ -222,11 +309,9 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
         for (node, path) in work_with_paths {
             let drive_sem = drive_sem.clone();
             let llm_sem = llm_sem.clone();
-            let client = opts.client.clone();
+            let client = client.clone();
             let llm = llm.clone();
             let workdir_path = workdir.path().to_path_buf();
-            let max_size = opts.max_size_bytes;
-            let max_pdf_pages = opts.max_pdf_pages;
             tasks.push(tokio::spawn(async move {
                 process_one(
                     node,
@@ -236,7 +321,7 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
                     drive_sem,
                     llm_sem,
                     workdir_path,
-                    max_size,
+                    max_size_bytes,
                     max_pdf_pages,
                 )
                 .await
@@ -248,72 +333,73 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
             let outcome = task
                 .await
                 .map_err(|e| CliError::new(format!("process join: {e}"), ErrorCode::Unknown))?;
-            apply_outcome(&opts.store, &mut graph, &mut stats, outcome)?;
+            apply_outcome(store, graph, stats, outcome)?;
         }
     }
 
     stats.process_ms = process_start.elapsed().as_millis();
+    // workdir is auto-cleaned when `tempfile::TempDir` drops.
+    Ok(())
+}
 
-    // ── Stage 3: embedding ──────────────────────────────────────────────
-    if let Some(embedding) = opts.embedding.as_ref() {
-        opts.store
-            .init_vector_table(embedding.dimensions(), opts.rebuild_embeddings)?;
-        if opts.rebuild_embeddings {
-            let scope_ids: Vec<String> = scope_set.iter().cloned().collect();
-            opts.store.clear_embedded_hashes_for_ids(&scope_ids)?;
-            // Mirror in-memory for the same scope so the embed-loop sees fresh state.
-            for id in &scope_ids {
-                if let Some(n) = graph.get_mut(id) {
-                    n.last_embedded_hash = None;
-                }
+async fn stage_embed(
+    store: &Store,
+    embedding: &dyn EmbeddingProvider,
+    graph: &mut DriveGraph,
+    scope_set: &HashSet<String>,
+    rebuild_embeddings: bool,
+    stats: &mut IndexStats,
+) -> Result<(), CliError> {
+    store.init_vector_table(embedding.dimensions(), rebuild_embeddings)?;
+    if rebuild_embeddings {
+        let scope_ids: Vec<String> = scope_set.iter().cloned().collect();
+        store.clear_embedded_hashes_for_ids(&scope_ids)?;
+        // Mirror in-memory for the same scope so the embed-loop sees fresh state.
+        for id in &scope_ids {
+            if let Some(n) = graph.get_mut(id) {
+                n.last_embedded_hash = None;
             }
-        }
-        let to_embed: Vec<&Node> = graph
-            .nodes()
-            .filter(|n| {
-                scope_set.contains(&n.id)
-                    && n.extracted_md.is_some()
-                    && n.content_hash.is_some()
-                    && n.content_hash != n.last_embedded_hash
-            })
-            .collect();
-        if !to_embed.is_empty() {
-            let embed_start = Instant::now();
-            let texts: Vec<String> = to_embed
-                .iter()
-                .map(|n| {
-                    n.extracted_md
-                        .as_ref()
-                        .map(|md| md.chars().take(EMBED_WINDOW).collect::<String>())
-                        .unwrap_or_default()
-                })
-                .collect();
-            let vectors = embedding.embed(&texts).await?;
-            let mut written = 0;
-            for (n, vec) in to_embed.iter().zip(vectors.iter()) {
-                let Some(hash) = n.content_hash.as_deref() else {
-                    continue;
-                };
-                opts.store.upsert_embedding(&n.id, vec)?;
-                opts.store.mark_embedded(&n.id, hash)?;
-                written += 1;
-            }
-            stats.embedded = written;
-            stats.embed_ms = embed_start.elapsed().as_millis();
         }
     }
-
-    // workdir is auto-cleaned when `tempfile::TempDir` drops.
-    Ok(stats)
+    let to_embed: Vec<&Node> = graph
+        .nodes()
+        .filter(|n| {
+            scope_set.contains(&n.id)
+                && n.extracted_md.is_some()
+                && n.content_hash.is_some()
+                && n.content_hash != n.last_embedded_hash
+        })
+        .collect();
+    if to_embed.is_empty() {
+        return Ok(());
+    }
+    let embed_start = Instant::now();
+    let texts: Vec<String> = to_embed
+        .iter()
+        .map(|n| {
+            n.extracted_md
+                .as_ref()
+                .map(|md| md.chars().take(EMBED_WINDOW).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect();
+    let vectors = embedding.embed(&texts).await?;
+    let mut written = 0;
+    for (n, vec) in to_embed.iter().zip(vectors.iter()) {
+        let Some(hash) = n.content_hash.as_deref() else {
+            continue;
+        };
+        store.upsert_embedding(&n.id, vec)?;
+        store.mark_embedded(&n.id, hash)?;
+        written += 1;
+    }
+    stats.embedded = written;
+    stats.embed_ms = embed_start.elapsed().as_millis();
+    Ok(())
 }
 
 fn resolve_llm_concurrency(llm: &dyn LlmProvider, explicit: Option<usize>) -> usize {
     if let Some(n) = explicit {
-        if llm.name() == "ollama" && n > 1 {
-            eprintln!(
-                "info: index: --concurrency-llm={n} against Ollama; the local model usually serializes inference per request, so >1 mostly adds queueing latency.",
-            );
-        }
         return n;
     }
     if llm.name() == "ollama" {

@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::batch::{make_custom_id, parse_custom_id, poll_until_done, split_jsonl, PollState};
-use super::http::{post_json, Auth, ErrorMapping};
+use super::batch::{make_custom_id, run_batch, BatchOps, PollState};
+use super::http::{post_json, Auth, LLM_BATCH_SUBMIT_ERROR_MAP, LLM_CALL_ERROR_MAP};
 use super::prompts::{summary_user, SUMMARY_SYSTEM};
 use super::provider::{BatchOptions, LlmProvider, LlmSummarizeInput, LlmSummary};
 use super::schema::llm_summary_schema;
@@ -44,8 +44,6 @@ struct BatchObject {
     status: String,
     #[serde(default)]
     output_file_id: Option<String>,
-    #[serde(default)]
-    error_file_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,21 +60,25 @@ pub struct OpenaiProvider {
     api_root: String,
 }
 
-impl OpenaiProvider {
-    pub fn new(api_key: impl Into<String>, model: Option<String>) -> Self {
-        Self::with_api_root(api_key, model, OPENAI_API_ROOT.to_string())
-    }
+pub struct OpenaiProviderOptions {
+    pub api_key: String,
+    pub model: Option<String>,
+    /// Override the API root. `None` uses OpenAI's default.
+    pub api_root: Option<String>,
+}
 
-    pub fn with_api_root(
-        api_key: impl Into<String>,
-        model: Option<String>,
-        api_root: String,
-    ) -> Self {
+impl OpenaiProvider {
+    pub fn new(opts: OpenaiProviderOptions) -> Self {
+        let api_root = opts
+            .api_root
+            .unwrap_or_else(|| OPENAI_API_ROOT.to_string())
+            .trim_end_matches('/')
+            .to_string();
         Self {
             http: reqwest::Client::new(),
-            api_key: api_key.into(),
-            model: model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
-            api_root: api_root.trim_end_matches('/').to_string(),
+            api_key: opts.api_key,
+            model: opts.model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
+            api_root,
         }
     }
 
@@ -96,22 +98,6 @@ impl OpenaiProvider {
                 }
             }
         })
-    }
-}
-
-fn err_map() -> ErrorMapping {
-    ErrorMapping {
-        call: ErrorCode::LlmCallFailed,
-        parse: ErrorCode::LlmMalformedOutput,
-        unreachable: None,
-    }
-}
-
-fn submit_err_map() -> ErrorMapping {
-    ErrorMapping {
-        call: ErrorCode::LlmBatchSubmitFailed,
-        parse: ErrorCode::LlmBatchSubmitFailed,
-        unreachable: None,
     }
 }
 
@@ -146,7 +132,7 @@ impl LlmProvider for OpenaiProvider {
             &[],
             &self.chat_body(input),
             "OpenAI",
-            &err_map(),
+            &LLM_CALL_ERROR_MAP,
         )
         .await?;
         let text = chat
@@ -168,11 +154,20 @@ impl LlmProvider for OpenaiProvider {
         inputs: &[LlmSummarizeInput],
         opts: &BatchOptions,
     ) -> Result<Vec<Result<LlmSummary, CliError>>, CliError> {
-        if inputs.is_empty() {
-            return Ok(Vec::new());
-        }
+        run_batch(self, inputs, opts).await
+    }
+}
 
-        // ── Build JSONL input file ──────────────────────────────────────
+#[async_trait]
+impl BatchOps for OpenaiProvider {
+    type SubmitHandle = String;
+    type FetchHandle = String;
+
+    fn label(&self) -> &'static str {
+        "OpenAI"
+    }
+
+    async fn submit(&self, inputs: &[LlmSummarizeInput]) -> Result<Self::SubmitHandle, CliError> {
         let mut jsonl = String::new();
         for (i, input) in inputs.iter().enumerate() {
             let line = json!({
@@ -190,7 +185,6 @@ impl LlmProvider for OpenaiProvider {
             jsonl.push('\n');
         }
 
-        // ── Upload via /v1/files ────────────────────────────────────────
         let files_url = format!("{}/files", self.api_root);
         let form = reqwest::multipart::Form::new()
             .text("purpose", "batch")
@@ -234,7 +228,6 @@ impl LlmProvider for OpenaiProvider {
             )
         })?;
 
-        // ── Create batch ───────────────────────────────────────────────
         let create_url = format!("{}/batches", self.api_root);
         let created: BatchCreateResponse = post_json(
             &self.http,
@@ -247,61 +240,64 @@ impl LlmProvider for OpenaiProvider {
                 "completion_window": "24h",
             }),
             "OpenAI batch",
-            &submit_err_map(),
+            &LLM_BATCH_SUBMIT_ERROR_MAP,
         )
         .await?;
+        Ok(created.id)
+    }
 
-        // ── Poll until terminal ────────────────────────────────────────
-        let status_url = format!("{}/batches/{}", self.api_root, created.id);
-        let final_batch: BatchObject = poll_until_done("OpenAI", opts, || async {
-            let resp = self
-                .http
-                .get(&status_url)
-                .bearer_auth(&self.api_key)
-                .send()
-                .await
-                .map_err(|e| {
-                    CliError::new(
-                        format!("OpenAI batch poll failed: {e}"),
-                        ErrorCode::LlmBatchPollFailed,
-                    )
-                })?;
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                return Ok(PollState::Failed(CliError::new(
-                    format!("OpenAI batch poll failed (status {status}): {text}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )));
-            }
-            let body: BatchObject = resp.json().await.map_err(|e| {
+    async fn poll(
+        &self,
+        batch_id: &Self::SubmitHandle,
+    ) -> Result<PollState<Self::FetchHandle>, CliError> {
+        let status_url = format!("{}/batches/{batch_id}", self.api_root);
+        let resp = self
+            .http
+            .get(&status_url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(|e| {
                 CliError::new(
-                    format!("OpenAI batch poll parse failed: {e}"),
+                    format!("OpenAI batch poll failed: {e}"),
                     ErrorCode::LlmBatchPollFailed,
                 )
             })?;
-            match body.status.as_str() {
-                "completed" => Ok(PollState::Done(body)),
-                "failed" | "expired" | "cancelled" => Ok(PollState::Failed(CliError::new(
-                    format!("OpenAI batch ended with status {}", body.status),
-                    ErrorCode::LlmBatchSubmitFailed,
-                ))),
-                _ => Ok(PollState::InProgress),
-            }
-        })
-        .await?;
-
-        let output_id = final_batch.output_file_id.ok_or_else(|| {
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Ok(PollState::Failed(CliError::new(
+                format!("OpenAI batch poll failed (status {status}): {text}"),
+                ErrorCode::LlmBatchPollFailed,
+            )));
+        }
+        let body: BatchObject = resp.json().await.map_err(|e| {
             CliError::new(
-                "OpenAI batch completed without output_file_id",
+                format!("OpenAI batch poll parse failed: {e}"),
                 ErrorCode::LlmBatchPollFailed,
             )
         })?;
+        match body.status.as_str() {
+            "completed" => {
+                let output_id = body.output_file_id.ok_or_else(|| {
+                    CliError::new(
+                        "OpenAI batch completed without output_file_id",
+                        ErrorCode::LlmBatchPollFailed,
+                    )
+                })?;
+                Ok(PollState::Done(output_id))
+            }
+            "failed" | "expired" | "cancelled" => Ok(PollState::Failed(CliError::new(
+                format!("OpenAI batch ended with status {}", body.status),
+                ErrorCode::LlmBatchSubmitFailed,
+            ))),
+            _ => Ok(PollState::InProgress),
+        }
+    }
 
-        // ── Fetch JSONL output ─────────────────────────────────────────
-        let content_url = format!("{}/files/{}/content", self.api_root, output_id);
-        let body = self
-            .http
+    async fn fetch(&self, output_id: &Self::FetchHandle) -> Result<String, CliError> {
+        let content_url = format!("{}/files/{output_id}/content", self.api_root);
+        self.http
             .get(&content_url)
             .bearer_auth(&self.api_key)
             .send()
@@ -320,65 +316,20 @@ impl LlmProvider for OpenaiProvider {
                     format!("OpenAI batch results read failed: {e}"),
                     ErrorCode::LlmBatchPollFailed,
                 )
-            })?;
+            })
+    }
 
-        let _ = final_batch.error_file_id; // we do not separately fetch the error file in v1
-
-        let mut out: Vec<Option<Result<LlmSummary, CliError>>> =
-            (0..inputs.len()).map(|_| None).collect();
-        for line in split_jsonl(&body) {
-            let v: Value = serde_json::from_str(line).map_err(|e| {
-                CliError::new(
-                    format!("OpenAI batch results parse failed: {e}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            let custom_id = v.get("custom_id").and_then(|x| x.as_str()).ok_or_else(|| {
-                CliError::new(
-                    "OpenAI batch result line missing custom_id",
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            let idx = parse_custom_id(custom_id).ok_or_else(|| {
-                CliError::new(
-                    format!("OpenAI batch returned unrecognized custom_id: {custom_id}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            if idx >= out.len() {
+    fn parse_line(&self, v: &Value) -> Result<LlmSummary, CliError> {
+        if let Some(err) = v.get("error") {
+            if !err.is_null() {
+                let msg = serde_json::to_string(err).unwrap_or_else(|_| "error".into());
                 return Err(CliError::new(
-                    format!("OpenAI batch returned out-of-range custom_id: {custom_id}"),
-                    ErrorCode::LlmBatchPollFailed,
+                    format!("OpenAI batch item errored: {msg}"),
+                    ErrorCode::LlmCallFailed,
                 ));
             }
-
-            let item: Result<LlmSummary, CliError> = if let Some(err) = v.get("error") {
-                if !err.is_null() {
-                    let msg = serde_json::to_string(err).unwrap_or_else(|_| "error".into());
-                    Err(CliError::new(
-                        format!("OpenAI batch item errored: {msg}"),
-                        ErrorCode::LlmCallFailed,
-                    ))
-                } else {
-                    extract_openai_response("OpenAI", &v)
-                }
-            } else {
-                extract_openai_response("OpenAI", &v)
-            };
-            out[idx] = Some(item);
         }
-
-        out.into_iter()
-            .enumerate()
-            .map(|(i, slot)| {
-                slot.ok_or_else(|| {
-                    CliError::new(
-                        format!("OpenAI batch did not return a result for input {i}"),
-                        ErrorCode::LlmBatchPollFailed,
-                    )
-                })
-            })
-            .collect()
+        extract_openai_response("OpenAI", v)
     }
 }
 
@@ -422,6 +373,14 @@ mod tests {
         }
     }
 
+    fn test_opts(api_key: &str, api_root: String) -> OpenaiProviderOptions {
+        OpenaiProviderOptions {
+            api_key: api_key.into(),
+            model: None,
+            api_root: Some(api_root),
+        }
+    }
+
     #[tokio::test]
     async fn happy_path_parses_choice_content() {
         let mut srv = Server::new_async().await;
@@ -434,7 +393,7 @@ mod tests {
             )
             .create_async()
             .await;
-        let p = OpenaiProvider::with_api_root("k", None, srv.url());
+        let p = OpenaiProvider::new(test_opts("k", srv.url()));
         let out = p.summarize(&input()).await.unwrap();
         assert_eq!(out.summary, "S");
     }
@@ -448,7 +407,7 @@ mod tests {
             .with_body("rate limited")
             .create_async()
             .await;
-        let p = OpenaiProvider::with_api_root("k", None, srv.url());
+        let p = OpenaiProvider::new(test_opts("k", srv.url()));
         let err = p.summarize(&input()).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::LlmCallFailed);
         assert!(err.message.contains("429"));
@@ -464,7 +423,7 @@ mod tests {
             .with_body(r#"{"choices":[]}"#)
             .create_async()
             .await;
-        let p = OpenaiProvider::with_api_root("k", None, srv.url());
+        let p = OpenaiProvider::new(test_opts("k", srv.url()));
         let err = p.summarize(&input()).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::LlmMalformedOutput);
     }
@@ -512,7 +471,7 @@ mod tests {
             .create_async()
             .await;
 
-        let p = OpenaiProvider::with_api_root("k", None, srv.url());
+        let p = OpenaiProvider::new(test_opts("k", srv.url()));
         let inputs = vec![input(), input()];
         let results = p
             .summarize_batch(&inputs, &fast_batch_opts())
@@ -545,7 +504,7 @@ mod tests {
             .create_async()
             .await;
 
-        let p = OpenaiProvider::with_api_root("k", None, srv.url());
+        let p = OpenaiProvider::new(test_opts("k", srv.url()));
         let err = p
             .summarize_batch(&[input()], &fast_batch_opts())
             .await
@@ -556,7 +515,11 @@ mod tests {
 
     #[tokio::test]
     async fn supports_batch_is_true() {
-        let p = OpenaiProvider::new("k", None);
+        let p = OpenaiProvider::new(OpenaiProviderOptions {
+            api_key: "k".into(),
+            model: None,
+            api_root: None,
+        });
         assert!(p.supports_batch());
     }
 }

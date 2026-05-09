@@ -7,8 +7,10 @@ use serde_json::json;
 
 use super::embed_batch::{batch_embed, validate_probe_dimensions, ProbeOptions};
 use super::embedding::EmbeddingProvider;
-use super::http::{post_json, Auth, ErrorMapping};
-use crate::error::{CliError, ErrorCode};
+use super::http::{post_json, Auth, EMBED_CALL_ERROR_MAP};
+use crate::error::CliError;
+#[cfg(test)]
+use crate::error::ErrorCode;
 
 const BATCH: usize = 96;
 const DEFAULT_MODEL: &str = "text-embedding-3-small";
@@ -79,11 +81,6 @@ impl AzureOpenaiEmbeddingProvider {
     }
 
     async fn call(&self, body: &serde_json::Value) -> Result<EmbeddingsResponse, CliError> {
-        let map = ErrorMapping {
-            call: ErrorCode::EmbedCallFailed,
-            parse: ErrorCode::EmbedCallFailed,
-            unreachable: None,
-        };
         post_json(
             &self.http,
             &self.url(),
@@ -91,7 +88,7 @@ impl AzureOpenaiEmbeddingProvider {
             &[],
             body,
             "Azure OpenAI embedding",
-            &map,
+            &EMBED_CALL_ERROR_MAP,
         )
         .await
     }

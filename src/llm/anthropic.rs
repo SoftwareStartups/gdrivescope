@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::batch::{make_custom_id, parse_custom_id, poll_until_done, split_jsonl, PollState};
-use super::http::{post_json, Auth, ErrorMapping};
+use super::batch::{make_custom_id, run_batch, BatchOps, PollState};
+use super::http::{post_json, Auth, LLM_BATCH_SUBMIT_ERROR_MAP, LLM_CALL_ERROR_MAP};
 use super::prompts::{summary_user, SUMMARY_SYSTEM};
 use super::provider::{BatchOptions, LlmProvider, LlmSummarizeInput, LlmSummary};
 use super::schema::llm_summary_schema;
@@ -57,21 +57,20 @@ pub struct AnthropicProvider {
     base_url: String,
 }
 
-impl AnthropicProvider {
-    pub fn new(api_key: impl Into<String>, model: Option<String>) -> Self {
-        Self::with_base_url(api_key, model, ANTHROPIC_API.to_string())
-    }
+pub struct AnthropicProviderOptions {
+    pub api_key: String,
+    pub model: Option<String>,
+    /// Override the Messages API endpoint. `None` uses Anthropic's default.
+    pub base_url: Option<String>,
+}
 
-    pub fn with_base_url(
-        api_key: impl Into<String>,
-        model: Option<String>,
-        base_url: String,
-    ) -> Self {
+impl AnthropicProvider {
+    pub fn new(opts: AnthropicProviderOptions) -> Self {
         Self {
             http: reqwest::Client::new(),
-            api_key: api_key.into(),
-            model: model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
-            base_url,
+            api_key: opts.api_key,
+            model: opts.model.unwrap_or_else(|| DEFAULT_MODEL.to_string()),
+            base_url: opts.base_url.unwrap_or_else(|| ANTHROPIC_API.to_string()),
         }
     }
 
@@ -97,22 +96,6 @@ impl AnthropicProvider {
                 "content": summary_user(&input.filename, &input.path, &input.markdown),
             }],
         })
-    }
-}
-
-fn err_map() -> ErrorMapping {
-    ErrorMapping {
-        call: ErrorCode::LlmCallFailed,
-        parse: ErrorCode::LlmMalformedOutput,
-        unreachable: None,
-    }
-}
-
-fn submit_err_map() -> ErrorMapping {
-    ErrorMapping {
-        call: ErrorCode::LlmBatchSubmitFailed,
-        parse: ErrorCode::LlmBatchSubmitFailed,
-        unreachable: None,
     }
 }
 
@@ -151,7 +134,7 @@ impl LlmProvider for AnthropicProvider {
             &[("anthropic-version", ANTHROPIC_VERSION)],
             &body,
             "Anthropic",
-            &err_map(),
+            &LLM_CALL_ERROR_MAP,
         )
         .await?;
         extract_summary(parsed.content)
@@ -162,11 +145,20 @@ impl LlmProvider for AnthropicProvider {
         inputs: &[LlmSummarizeInput],
         opts: &BatchOptions,
     ) -> Result<Vec<Result<LlmSummary, CliError>>, CliError> {
-        if inputs.is_empty() {
-            return Ok(Vec::new());
-        }
+        run_batch(self, inputs, opts).await
+    }
+}
 
-        // ── Submit ──────────────────────────────────────────────────────
+#[async_trait]
+impl BatchOps for AnthropicProvider {
+    type SubmitHandle = String;
+    type FetchHandle = String;
+
+    fn label(&self) -> &'static str {
+        "Anthropic"
+    }
+
+    async fn submit(&self, inputs: &[LlmSummarizeInput]) -> Result<Self::SubmitHandle, CliError> {
         let requests: Vec<Value> = inputs
             .iter()
             .enumerate()
@@ -186,58 +178,60 @@ impl LlmProvider for AnthropicProvider {
             &[("anthropic-version", ANTHROPIC_VERSION)],
             &submit_body,
             "Anthropic batch",
-            &submit_err_map(),
+            &LLM_BATCH_SUBMIT_ERROR_MAP,
         )
         .await?;
+        Ok(created.id)
+    }
 
-        // ── Poll until ended ────────────────────────────────────────────
-        let status_url = format!("{}/batches/{}", self.base_url, created.id);
-        let results_url: String = poll_until_done("Anthropic", opts, || async {
-            let resp = self
-                .http
-                .get(&status_url)
-                .header("x-api-key", &self.api_key)
-                .header("anthropic-version", ANTHROPIC_VERSION)
-                .send()
-                .await
-                .map_err(|e| {
-                    CliError::new(
-                        format!("Anthropic batch poll failed: {e}"),
-                        ErrorCode::LlmBatchPollFailed,
-                    )
-                })?;
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                return Ok(PollState::Failed(CliError::new(
-                    format!("Anthropic batch poll failed (status {status}): {text}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )));
-            }
-            let body: BatchStatusResponse = resp.json().await.map_err(|e| {
+    async fn poll(
+        &self,
+        batch_id: &Self::SubmitHandle,
+    ) -> Result<PollState<Self::FetchHandle>, CliError> {
+        let status_url = format!("{}/batches/{batch_id}", self.base_url);
+        let resp = self
+            .http
+            .get(&status_url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .send()
+            .await
+            .map_err(|e| {
                 CliError::new(
-                    format!("Anthropic batch poll parse failed: {e}"),
+                    format!("Anthropic batch poll failed: {e}"),
                     ErrorCode::LlmBatchPollFailed,
                 )
             })?;
-            if body.processing_status == "ended" {
-                let url = body.results_url.ok_or_else(|| {
-                    CliError::new(
-                        "Anthropic batch ended without a results_url",
-                        ErrorCode::LlmBatchPollFailed,
-                    )
-                })?;
-                Ok(PollState::Done(url))
-            } else {
-                Ok(PollState::InProgress)
-            }
-        })
-        .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Ok(PollState::Failed(CliError::new(
+                format!("Anthropic batch poll failed (status {status}): {text}"),
+                ErrorCode::LlmBatchPollFailed,
+            )));
+        }
+        let body: BatchStatusResponse = resp.json().await.map_err(|e| {
+            CliError::new(
+                format!("Anthropic batch poll parse failed: {e}"),
+                ErrorCode::LlmBatchPollFailed,
+            )
+        })?;
+        if body.processing_status == "ended" {
+            let url = body.results_url.ok_or_else(|| {
+                CliError::new(
+                    "Anthropic batch ended without a results_url",
+                    ErrorCode::LlmBatchPollFailed,
+                )
+            })?;
+            Ok(PollState::Done(url))
+        } else {
+            Ok(PollState::InProgress)
+        }
+    }
 
-        // ── Fetch JSONL results ─────────────────────────────────────────
-        let body = self
-            .http
-            .get(&results_url)
+    async fn fetch(&self, results_url: &Self::FetchHandle) -> Result<String, CliError> {
+        self.http
+            .get(results_url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .send()
@@ -256,97 +250,52 @@ impl LlmProvider for AnthropicProvider {
                     format!("Anthropic batch results read failed: {e}"),
                     ErrorCode::LlmBatchPollFailed,
                 )
-            })?;
-
-        let mut out: Vec<Option<Result<LlmSummary, CliError>>> =
-            (0..inputs.len()).map(|_| None).collect();
-        for line in split_jsonl(&body) {
-            let v: Value = serde_json::from_str(line).map_err(|e| {
-                CliError::new(
-                    format!("Anthropic batch results parse failed: {e}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            let custom_id = v.get("custom_id").and_then(|x| x.as_str()).ok_or_else(|| {
-                CliError::new(
-                    "Anthropic batch result line missing custom_id",
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            let idx = parse_custom_id(custom_id).ok_or_else(|| {
-                CliError::new(
-                    format!("Anthropic batch returned unrecognized custom_id: {custom_id}"),
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            if idx >= out.len() {
-                return Err(CliError::new(
-                    format!("Anthropic batch returned out-of-range custom_id: {custom_id}"),
-                    ErrorCode::LlmBatchPollFailed,
-                ));
-            }
-
-            let result = v.get("result").ok_or_else(|| {
-                CliError::new(
-                    "Anthropic batch result line missing result",
-                    ErrorCode::LlmBatchPollFailed,
-                )
-            })?;
-            let kind = result.get("type").and_then(|x| x.as_str()).unwrap_or("");
-            let item: Result<LlmSummary, CliError> = match kind {
-                "succeeded" => {
-                    let content = result
-                        .get("message")
-                        .and_then(|m| m.get("content"))
-                        .cloned()
-                        .ok_or_else(|| {
-                            CliError::new(
-                                "Anthropic batch succeeded result missing message.content",
-                                ErrorCode::LlmMalformedOutput,
-                            )
-                        })
-                        .and_then(|c| {
-                            serde_json::from_value::<Vec<ContentBlock>>(c).map_err(|e| {
-                                CliError::new(
-                                    format!("Anthropic batch content parse failed: {e}"),
-                                    ErrorCode::LlmMalformedOutput,
-                                )
-                            })
-                        });
-                    match content {
-                        Ok(blocks) => extract_summary(blocks),
-                        Err(e) => Err(e),
-                    }
-                }
-                "errored" | "canceled" | "expired" => {
-                    let detail = result
-                        .get("error")
-                        .and_then(|e| serde_json::to_string(e).ok())
-                        .unwrap_or_else(|| kind.to_string());
-                    Err(CliError::new(
-                        format!("Anthropic batch result {kind}: {detail}"),
-                        ErrorCode::LlmCallFailed,
-                    ))
-                }
-                other => Err(CliError::new(
-                    format!("Anthropic batch returned unknown result type: {other}"),
-                    ErrorCode::LlmMalformedOutput,
-                )),
-            };
-            out[idx] = Some(item);
-        }
-
-        out.into_iter()
-            .enumerate()
-            .map(|(i, slot)| {
-                slot.ok_or_else(|| {
-                    CliError::new(
-                        format!("Anthropic batch did not return a result for input {i}"),
-                        ErrorCode::LlmBatchPollFailed,
-                    )
-                })
             })
-            .collect()
+    }
+
+    fn parse_line(&self, v: &Value) -> Result<LlmSummary, CliError> {
+        let result = v.get("result").ok_or_else(|| {
+            CliError::new(
+                "Anthropic batch result line missing result",
+                ErrorCode::LlmBatchPollFailed,
+            )
+        })?;
+        let kind = result.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        match kind {
+            "succeeded" => {
+                let content = result
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .cloned()
+                    .ok_or_else(|| {
+                        CliError::new(
+                            "Anthropic batch succeeded result missing message.content",
+                            ErrorCode::LlmMalformedOutput,
+                        )
+                    })?;
+                let blocks: Vec<ContentBlock> = serde_json::from_value(content).map_err(|e| {
+                    CliError::new(
+                        format!("Anthropic batch content parse failed: {e}"),
+                        ErrorCode::LlmMalformedOutput,
+                    )
+                })?;
+                extract_summary(blocks)
+            }
+            "errored" | "canceled" | "expired" => {
+                let detail = result
+                    .get("error")
+                    .and_then(|e| serde_json::to_string(e).ok())
+                    .unwrap_or_else(|| kind.to_string());
+                Err(CliError::new(
+                    format!("Anthropic batch result {kind}: {detail}"),
+                    ErrorCode::LlmCallFailed,
+                ))
+            }
+            other => Err(CliError::new(
+                format!("Anthropic batch returned unknown result type: {other}"),
+                ErrorCode::LlmMalformedOutput,
+            )),
+        }
     }
 }
 
@@ -364,6 +313,14 @@ mod tests {
         }
     }
 
+    fn test_opts(api_key: &str, base_url: String) -> AnthropicProviderOptions {
+        AnthropicProviderOptions {
+            api_key: api_key.into(),
+            model: None,
+            base_url: Some(base_url),
+        }
+    }
+
     #[tokio::test]
     async fn happy_path_extracts_tool_use_input() {
         let mut srv = Server::new_async().await;
@@ -377,7 +334,7 @@ mod tests {
             )
             .create_async()
             .await;
-        let p = AnthropicProvider::with_base_url("test-key", None, srv.url());
+        let p = AnthropicProvider::new(test_opts("test-key", srv.url()));
         let out = p.summarize(&input()).await.unwrap();
         assert_eq!(out.summary, "S");
         assert_eq!(out.key_topics, vec!["t"]);
@@ -392,7 +349,7 @@ mod tests {
             .with_body("unauthorized")
             .create_async()
             .await;
-        let p = AnthropicProvider::with_base_url("bad", None, srv.url());
+        let p = AnthropicProvider::new(test_opts("bad", srv.url()));
         let err = p.summarize(&input()).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::LlmCallFailed);
         assert!(err.message.contains("401"));
@@ -408,7 +365,7 @@ mod tests {
             .with_body(r#"{"content":[{"type":"text","text":"hi"}]}"#)
             .create_async()
             .await;
-        let p = AnthropicProvider::with_base_url("k", None, srv.url());
+        let p = AnthropicProvider::new(test_opts("k", srv.url()));
         let err = p.summarize(&input()).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::LlmMalformedOutput);
     }
@@ -454,7 +411,7 @@ mod tests {
             .create_async()
             .await;
 
-        let p = AnthropicProvider::with_base_url("k", None, srv.url());
+        let p = AnthropicProvider::new(test_opts("k", srv.url()));
         let inputs = vec![input(), input()];
         let results = p
             .summarize_batch(&inputs, &fast_batch_opts())
@@ -496,7 +453,7 @@ mod tests {
             .create_async()
             .await;
 
-        let p = AnthropicProvider::with_base_url("k", None, srv.url());
+        let p = AnthropicProvider::new(test_opts("k", srv.url()));
         let inputs = vec![input(), input()];
         let results = p
             .summarize_batch(&inputs, &fast_batch_opts())
@@ -526,7 +483,7 @@ mod tests {
             .create_async()
             .await;
 
-        let p = AnthropicProvider::with_base_url("k", None, srv.url());
+        let p = AnthropicProvider::new(test_opts("k", srv.url()));
         let opts = BatchOptions {
             timeout: std::time::Duration::from_millis(20),
             poll_interval: std::time::Duration::from_millis(5),
@@ -537,7 +494,11 @@ mod tests {
 
     #[tokio::test]
     async fn supports_batch_is_true() {
-        let p = AnthropicProvider::new("k", None);
+        let p = AnthropicProvider::new(AnthropicProviderOptions {
+            api_key: "k".into(),
+            model: None,
+            base_url: None,
+        });
         assert!(p.supports_batch());
     }
 }

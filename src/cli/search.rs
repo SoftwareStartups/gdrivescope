@@ -1,17 +1,15 @@
 use clap::Args;
 use serde::Serialize;
 
-use crate::config::load_workspace_config;
 use crate::error::{CliError, ErrorCode};
 use crate::formatters::emit;
-use crate::graph::hydrate::hydrate_graph;
-use crate::graph::store::Store;
 use crate::llm::resolver::{resolve_embedding_provider, ResolveEmbeddingOptions};
 use crate::models::{success, ApiResponse};
 use crate::search::{
     lexical_search, semantic_search, Hit, LexicalSearchOptions, SemanticSearchOptions,
 };
-use crate::utils::db_path;
+
+use super::CommandContext;
 
 #[derive(Args, Debug, Clone)]
 pub struct SearchArgs {
@@ -41,9 +39,11 @@ pub async fn execute(args: SearchArgs) -> Result<(), CliError> {
         .query
         .ok_or_else(|| CliError::new("search: <query> is required", ErrorCode::MissingArg))?;
 
-    let cfg = load_workspace_config().unwrap_or_default();
-    let store = Store::open(&db_path()?)?;
-    let graph = hydrate_graph(&store)?;
+    let CommandContext {
+        store,
+        graph,
+        config: cfg,
+    } = CommandContext::open()?;
 
     let scope_resolved = args
         .scope

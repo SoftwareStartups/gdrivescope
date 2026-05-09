@@ -30,13 +30,17 @@ pub struct OllamaProvider {
     model: String,
 }
 
+pub struct OllamaProviderOptions {
+    pub host: String,
+    pub model: String,
+}
+
 impl OllamaProvider {
-    pub fn new(host: impl Into<String>, model: impl Into<String>) -> Self {
-        let host = host.into();
+    pub fn new(opts: OllamaProviderOptions) -> Self {
         Self {
             http: reqwest::Client::new(),
-            host: host.trim_end_matches('/').to_string(),
-            model: model.into(),
+            host: opts.host.trim_end_matches('/').to_string(),
+            model: opts.model,
         }
     }
 
@@ -149,7 +153,10 @@ mod tests {
             )
             .create_async()
             .await;
-        let p = OllamaProvider::new(srv.url(), "llama3");
+        let p = OllamaProvider::new(OllamaProviderOptions {
+            host: srv.url(),
+            model: "llama3".into(),
+        });
         let out = p.summarize(&input()).await.unwrap();
         assert_eq!(out.summary, "S");
     }
@@ -164,14 +171,20 @@ mod tests {
             .expect_at_least(1)
             .create_async()
             .await;
-        let p = OllamaProvider::new(srv.url(), "llama3");
+        let p = OllamaProvider::new(OllamaProviderOptions {
+            host: srv.url(),
+            model: "llama3".into(),
+        });
         let err = p.summarize(&input()).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::LlmCallFailed);
     }
 
     #[tokio::test]
     async fn unreachable_host_maps_to_provider_unavailable() {
-        let p = OllamaProvider::new("http://127.0.0.1:1", "llama3");
+        let p = OllamaProvider::new(OllamaProviderOptions {
+            host: "http://127.0.0.1:1".into(),
+            model: "llama3".into(),
+        });
         let err = p.summarize(&input()).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::ProviderUnavailable);
         assert!(err.message.contains("not reachable"));

@@ -73,7 +73,7 @@ pub async fn traverse_drive_folder(
             .anchor_root_id
             .clone()
             .unwrap_or_else(|| resolved.clone());
-        let node = file_to_node_input(&root, None, Some(&anchor));
+        let node = file_to_node_input(&root, None, Some(&anchor))?;
         send_node(&tx, node).await?;
         counters.visited += 1;
         counters.folders += 1;
@@ -168,7 +168,7 @@ async fn visit_folder(
             file
         };
 
-        let node = file_to_node_input(&resolved, Some(folder_id), Some(anchor));
+        let node = file_to_node_input(&resolved, Some(folder_id), Some(anchor))?;
         let resolved_mime = resolved.mime_type().unwrap_or_default().to_string();
         send_node(tx, node).await?;
         out.visited += 1;
@@ -196,6 +196,15 @@ async fn list_all_children(
     client: &DriveClient,
     folder_id: &str,
 ) -> Result<Vec<DriveFile>, CliError> {
+    // Drive file IDs are documented as `[A-Za-z0-9_-]+`. A stray quote here
+    // would break our `q` string interpolation, so trip in dev/test if Drive
+    // ever returns something exotic.
+    debug_assert!(
+        folder_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+        "drive folder id contains unexpected characters: {folder_id:?}",
+    );
     let mut all = Vec::new();
     let mut token: Option<String> = None;
     let q = format!("'{folder_id}' in parents and trashed = false");
@@ -259,9 +268,14 @@ pub(crate) fn file_to_node_input(
     file: &DriveFile,
     parent_id: Option<&str>,
     root_id: Option<&str>,
-) -> DriveNodeInput {
-    DriveNodeInput {
-        id: file.id().unwrap_or("").to_string(),
+) -> Result<DriveNodeInput, CliError> {
+    let id = file
+        .id()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| CliError::new("Drive returned a file without an id", ErrorCode::Unknown))?
+        .to_string();
+    Ok(DriveNodeInput {
+        id,
         parent_id: parent_id.map(str::to_string),
         name: file.name().unwrap_or("(untitled)").to_string(),
         mime_type: file
@@ -274,7 +288,7 @@ pub(crate) fn file_to_node_input(
         web_view_link: file.web_view_link().map(str::to_string),
         root_id: root_id.map(str::to_string),
         metadata: file.metadata().clone(),
-    }
+    })
 }
 
 fn clamp_concurrency(n: Option<usize>) -> usize {
@@ -312,7 +326,7 @@ mod tests {
             "webViewLink": "https://drive.google.com/.../fid",
             "customField": "preserved"
         }));
-        let n = file_to_node_input(&f, Some("parent-1"), Some("root-1"));
+        let n = file_to_node_input(&f, Some("parent-1"), Some("root-1")).unwrap();
         assert_eq!(n.id, "fid");
         assert_eq!(n.name, "doc.pdf");
         assert_eq!(n.parent_id.as_deref(), Some("parent-1"));
@@ -326,12 +340,20 @@ mod tests {
     }
 
     #[test]
-    fn file_to_node_input_handles_missing_fields() {
-        let f = drive_file(serde_json::json!({}));
-        let n = file_to_node_input(&f, None, None);
+    fn file_to_node_input_defaults_optional_fields_when_id_present() {
+        let f = drive_file(serde_json::json!({ "id": "fid" }));
+        let n = file_to_node_input(&f, None, None).unwrap();
+        assert_eq!(n.id, "fid");
         assert_eq!(n.name, "(untitled)");
         assert_eq!(n.mime_type, "application/octet-stream");
         assert_eq!(n.size, None);
         assert!(n.parent_id.is_none());
+    }
+
+    #[test]
+    fn file_to_node_input_rejects_missing_id() {
+        let f = drive_file(serde_json::json!({}));
+        let err = file_to_node_input(&f, None, None).unwrap_err();
+        assert!(err.message.contains("without an id"));
     }
 }

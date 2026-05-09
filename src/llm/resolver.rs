@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use super::anthropic::AnthropicProvider;
+use super::anthropic::{AnthropicProvider, AnthropicProviderOptions};
 use super::azure_openai::{AzureOpenaiProvider, AzureOpenaiProviderOptions};
 use super::azure_openai_embedding::{AzureOpenaiEmbeddingOptions, AzureOpenaiEmbeddingProvider};
 use super::embedding::EmbeddingProvider;
@@ -15,9 +15,9 @@ use super::env::{
     read_embedding_dims_env, read_embedding_model_env, read_llm_model_env, require_env,
     EmbeddingProviderName, LlmProviderName,
 };
-use super::ollama::OllamaProvider;
+use super::ollama::{OllamaProvider, OllamaProviderOptions};
 use super::ollama_embedding::{OllamaEmbeddingOptions, OllamaEmbeddingProvider};
-use super::openai::OpenaiProvider;
+use super::openai::{OpenaiProvider, OpenaiProviderOptions};
 use super::openai_embedding::{OpenaiEmbeddingOptions, OpenaiEmbeddingProvider};
 use super::provider::LlmProvider;
 use super::voyage_embedding::{VoyageEmbeddingOptions, VoyageEmbeddingProvider};
@@ -68,11 +68,19 @@ pub fn resolve_llm_provider(opts: ResolveLlmOptions) -> Result<Arc<dyn LlmProvid
     Ok(match name {
         LlmProviderName::Anthropic => {
             let key = require_env("ANTHROPIC_API_KEY", LLM_KEY_HINT)?;
-            Arc::new(AnthropicProvider::new(key, model))
+            Arc::new(AnthropicProvider::new(AnthropicProviderOptions {
+                api_key: key,
+                model,
+                base_url: None,
+            }))
         }
         LlmProviderName::OpenAi => {
             let key = require_env("OPENAI_API_KEY", LLM_KEY_HINT)?;
-            Arc::new(OpenaiProvider::new(key, model))
+            Arc::new(OpenaiProvider::new(OpenaiProviderOptions {
+                api_key: key,
+                model,
+                api_root: None,
+            }))
         }
         LlmProviderName::AzureOpenAi => {
             let key = require_env("AZURE_OPENAI_API_KEY", LLM_KEY_HINT)?;
@@ -114,7 +122,10 @@ pub fn resolve_llm_provider(opts: ResolveLlmOptions) -> Result<Arc<dyn LlmProvid
                         .and_then(|c| c.llm_model.clone())
                 })
                 .unwrap_or_else(|| "llama3.2:3b".to_string());
-            Arc::new(OllamaProvider::new(host, chosen))
+            Arc::new(OllamaProvider::new(OllamaProviderOptions {
+                host,
+                model: chosen,
+            }))
         }
     })
 }

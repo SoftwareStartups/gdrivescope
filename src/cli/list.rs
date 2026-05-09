@@ -3,11 +3,10 @@ use serde::Serialize;
 
 use crate::error::CliError;
 use crate::formatters::emit;
-use crate::graph::hydrate::hydrate_graph;
 use crate::graph::paths::{descendants, node_path};
-use crate::graph::store::Store;
 use crate::models::{success, ApiResponse};
-use crate::utils::db_path;
+
+use super::CommandContext;
 
 #[derive(Args, Debug, Clone)]
 pub struct ListArgs {
@@ -39,17 +38,16 @@ struct ListData {
 }
 
 pub async fn execute(args: ListArgs) -> Result<(), CliError> {
-    let store = Store::open(&db_path()?)?;
-    let graph = hydrate_graph(&store)?;
+    let CommandContext {
+        store,
+        graph,
+        config,
+    } = CommandContext::open()?;
 
-    let parent_filter = match args.target.as_deref() {
-        Some(target) => {
-            // Allow alias resolution if config exists, but tolerate a missing config.
-            let cfg = crate::config::load_workspace_config().unwrap_or_default();
-            Some(crate::config::resolve_folder(&cfg, target))
-        }
-        None => None,
-    };
+    let parent_filter = args
+        .target
+        .as_deref()
+        .map(|t| crate::config::resolve_folder(&config, t));
 
     let mut entries: Vec<Entry> = Vec::new();
     if args.recursive {
