@@ -51,8 +51,11 @@ gdrivescope --json list FOLDER_ID -r | jq '.data.files[] | {id, name, mime_type}
 # List only folders (or only files / shortcuts / other)
 gdrivescope --json list FOLDER_ID -r --type folder | jq '.data.files[] | {id, name}'
 
-# Download a file to disk
+# Download a single file to disk
 gdrivescope --json download FILE_ID -o ./report.pdf | jq '.data | {output_path, bytes}'
+
+# Recursively mirror a folder + write `<filename>.md` sidecars for every extractable file
+gdrivescope --json download FOLDER_ID -o ./tmp/ --convert | jq '.data | {scope_name, bytes_total, converted, files: (.files | length)}'
 
 # Metadata-only index (fast, no LLM cost)
 gdrivescope --json index --scope FOLDER_ID --metadata-only | jq '.data'
@@ -84,7 +87,7 @@ gdrivescope --json ollama setup | jq '.data'
 
 ## Roots
 
-A **root** is a Drive folder (identified by Folder ID) registered as a stable anchor point. When you `index --scope <subfolder>`, gdrivescope walks up to find the matching root and stamps `root_id` on every indexed node so paths remain consistent across runs. Roots are configured in `~/.config/gdrivescope/config.toml` and managed via `gdrivescope config add-root|remove-root|list-roots` — typically one root per logical drive area you want to index.
+A **root** is a Drive folder (identified by Folder ID) registered as a stable anchor point. When you `index --scope <subfolder>`, gdrivescope walks up to find the matching root and stamps `root_id` on every indexed node so paths remain consistent across runs. Roots are persisted in the platform-specific workspace config (`~/Library/Application Support/gdrivescope/config.toml` on macOS, `~/.config/gdrivescope/config.toml` on Linux, `%APPDATA%\gdrivescope\config.toml` on Windows — resolved via the `dirs` crate's `config_dir()`) and managed via `gdrivescope config add-root|remove-root|list-roots` — typically one root per logical drive area you want to index.
 
 ## Environment Variables
 
@@ -94,7 +97,7 @@ A **root** is a Drive folder (identified by Folder ID) registered as a stable an
 - **Ollama:** `GDRIVESCOPE_OLLAMA_HOST`, `GDRIVESCOPE_OLLAMA_MODEL`, `GDRIVESCOPE_OLLAMA_EMBEDDING_MODEL`, `GDRIVESCOPE_OLLAMA_EMBEDDING_DIMENSIONS`
 - **Limits:** `GDRIVESCOPE_MAX_SIZE`, `GDRIVESCOPE_MAX_PDF_PAGES`
 
-Error codes: `AUTH_REQUIRED` `AUTH_FAILED` `SCOPE_REQUIRED` `NODE_NOT_FOUND` `MISSING_ARG` `BAD_ARG` `USAGE` `PROVIDER_UNCONFIGURED` `PROVIDER_UNKNOWN` `PROVIDER_UNAVAILABLE` `EMBEDDING_DIM_MISMATCH` `NO_EMBEDDINGS` `VEC_EXTENSION_FAILED` `LLM_CALL_FAILED` `EMBED_CALL_FAILED` `EXTRACT_FAILED` `UNSUPPORTED_MIME` `OLLAMA_PULL_FAILED` `UNKNOWN_COMMAND` `UNKNOWN`
+Error codes: `AUTH_REQUIRED` `AUTH_FAILED` `SCOPE_REQUIRED` `NODE_NOT_FOUND` `MISSING_ARG` `BAD_ARG` `USAGE` `PROVIDER_UNCONFIGURED` `PROVIDER_UNKNOWN` `PROVIDER_UNAVAILABLE` `EMBEDDING_DIM_MISMATCH` `NO_EMBEDDINGS` `VEC_EXTENSION_FAILED` `LLM_CALL_FAILED` `LLM_MALFORMED_OUTPUT` `LLM_BATCH_SUBMIT_FAILED` `LLM_BATCH_POLL_FAILED` `LLM_BATCH_TIMEOUT` `EMBED_CALL_FAILED` `EXTRACT_FAILED` `PDF_SLICE_FAILED` `UNSUPPORTED_MIME` `OUTPUT_PATH_INVALID` `IO_FAILED` `DOWNLOAD_TREE_FAILED` `OLLAMA_PULL_FAILED` `UNKNOWN_COMMAND` `UNKNOWN`
 
 ## References
 

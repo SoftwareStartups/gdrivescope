@@ -1,4 +1,8 @@
-//! TOML workspace config at `~/.config/gdrivescope/config.toml`.
+//! TOML workspace config at the platform-specific data dir resolved via
+//! `dirs::config_dir()` (e.g. `~/Library/Application Support/gdrivescope/config.toml`
+//! on macOS, `~/.config/gdrivescope/config.toml` on Linux,
+//! `%APPDATA%\gdrivescope\config.toml` on Windows). Override with the
+//! `GDRIVESCOPE_CONFIG` environment variable.
 //!
 //! Round-trips losslessly: `[[roots]]` array, `[folders]` map, and per-
 //! section `[llm]`, `[embedding]`, `[extraction]`, `[ollama]`, `[azure]`

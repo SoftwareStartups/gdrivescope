@@ -38,18 +38,19 @@ gdrivescope index [flags]
 
 | Flag | Args | Purpose |
 |------|------|---------|
-| `--scope` | `<FOLDER_ID>` | Start folder id or alias (default: `root`) |
+| `--scope` | `<FOLDER_ID>` | Start folder id or alias (default: every configured root, or `root` if none) |
 | `--metadata-only` | | Skip extraction + LLM + embeddings |
 | `--resume` | | Only process nodes without summary or with errors |
-| `--prune` | | Delete store rows for files no longer in Drive |
+| `--prune` | | Delete store rows for files no longer in Drive (scoped) |
 | `--provider` | `<name>` | LLM provider |
 | `--embedding-provider` | `<name>` | Embedding provider |
-| `--rebuild-embeddings` | | Drop + recreate vector table at current dimension |
+| `--rebuild-embeddings` | | Force re-embed of every file in scope at the current dimension |
 | `--concurrency-drive` | `<N>` | Max parallel Drive API calls (default: 15) |
 | `--concurrency-llm` | `<N>` | Max parallel LLM/embedding calls (default: 4; 1 when provider is `ollama`) |
 | `--concurrency` | `<N>` | Shorthand for `--concurrency-drive` |
 | `--max-size` | `<bytes>` | Skip files larger than this (default: 20971520) |
 | `--max-pdf-pages` | `<N>` | Slice PDFs to first N pages (default: 10) |
+| `--batch-timeout-secs` | `<N>` | Max wait for a provider's async batch (Anthropic / OpenAI / Azure OpenAI; ignored for Ollama; default: 1800) |
 | `--root` | `<FOLDER_ID>` | One-shot root override (bypasses config) |
 | `--add-root` | | Persist the resolved root to config |
 
@@ -218,22 +219,47 @@ gdrivescope --json search "design" --classification financial | jq '.data.hits[]
 gdrivescope download <ID> [flags]
 ```
 
+`<ID>` may resolve to a single file **or a folder**. For folders, `download` traverses the subtree (BFS) and mirrors every descendant file under `<output>/<scope-folder-name>/...`, preserving the Drive folder structure. With `--convert`, each extractable file gets a `<filename>.md` markdown sidecar written alongside it.
+
 | Flag | Args | Purpose |
 |------|------|---------|
 | `-o, --output` | `<path>` | Destination file or directory (default: cwd) |
 | `--format` | `auto\|raw` | Export format (default: auto) |
+| `--convert` | | Also write a `<filename>.md` markdown sidecar for every extractable file |
+| `--max-size` | `<bytes>` | Skip *conversion* of files larger than this (download itself is unconditional). Default: no cap |
+| `--max-pdf-pages` | `<N>` | Truncate PDF conversion to first N pages. Default: full PDF |
+| `--concurrency` | `<N>` | Parallelism cap for tree downloads (clamped 1..=15, default: 4). Ignored for single-file downloads |
 
-Formats: `auto` (export Google Workspace docs via export map), `raw` (binary bytes).
+Formats: `auto` (export Google Workspace docs to `.docx` / `.xlsx` / `.pptx` via the office export map), `raw` (binary bytes; preserves the native Drive format).
+
+JSON envelopes:
+
+- Single file: `{ok, data: {output_path, bytes, mime_type, converted_path}}` — `converted_path` is non-null when `--convert` was used and produced a sidecar.
+- Folder: `{ok, data: {scope_id, scope_name, files: [{id, name, path, bytes, converted}], failures: [{id, name, path, message, stage}], bytes_total, converted}}` — `converted` is the count of files that produced sidecars; `failures[].stage` is `"download"` or `"convert"`.
+
+Per-file failures during a tree download are captured in `failures` and also surface as `warn: download: "<name>" failed: <msg>` lines on stderr; the run does not abort.
 
 ```bash
-# Download to current directory
+# Download a single file to current directory
 gdrivescope --json download FILE_ID | jq '.data | {output_path, bytes}'
 
-# Download to specific path
+# Download a single file to specific path
 gdrivescope --json download FILE_ID -o ./reports/q4.pdf | jq '.data | {output_path, bytes}'
 
-# Download raw bytes (skip export conversion)
+# Download raw bytes (skip Google Workspace export conversion)
 gdrivescope --json download FILE_ID --format raw | jq '.data | {output_path, bytes}'
+
+# Single file + write a markdown sidecar next to it
+gdrivescope --json download FILE_ID -o ./reports/ --convert | jq '.data | {output_path, converted_path}'
+
+# Recursively mirror a folder tree
+gdrivescope --json download FOLDER_ID -o ./tmp/ | jq '.data | {scope_name, bytes_total, files: (.files | length)}'
+
+# Recursive + convert: every extractable file gets a `.md` sidecar
+gdrivescope --json download FOLDER_ID -o ./tmp/ --convert | jq '.data | {scope_name, converted, files: (.files | length), failures: (.failures | length)}'
+
+# Throttle to 2 concurrent downloads (e.g. on a slow link)
+gdrivescope --json download FOLDER_ID -o ./tmp/ --concurrency 2 | jq '.data.bytes_total'
 ```
 
 ## Global Flags

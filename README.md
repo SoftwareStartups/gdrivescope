@@ -187,7 +187,7 @@ gdrivescope config remove-root <FOLDER_ID>
 
 If `--scope` points to a folder that is not under any configured root, gdrivescope warns and indexes it as a standalone tree. You can add it later with `config add-root`.
 
-Roots are stored in `~/.config/gdrivescope/config.toml`:
+Roots are stored in the workspace config — see [Configuration](#configuration) for the platform-specific path.
 
 ```toml
 [[roots]]
@@ -209,7 +209,7 @@ label = "Team Drive"
 | `list [FOLDER_ID]` | Tree listing from the local graph (`--type folder\|file\|shortcut\|other` to filter) |
 | `show <ID>` | Node details (path, metadata, summary, topics) |
 | `search <QUERY>` | Semantic + filter search via sqlite-vec (`--type` filter supported) |
-| `download <ID>` | Raw bytes to disk |
+| `download <ID>` | Single file to disk, or recursively mirror a folder tree (with optional `--convert` markdown sidecars) |
 | `ollama setup` | Configure local Ollama (pull models, validate endpoints, write config) |
 
 ## Index flags
@@ -229,7 +229,21 @@ label = "Team Drive"
 --rebuild-embeddings         Drop + recreate the vector table
 --max-size <BYTES>           Skip files larger than this (default 20 MB)
 --max-pdf-pages <N>          Slice PDFs to first N pages (default 10)
+--batch-timeout-secs <N>     Max wait for a provider's async batch (Anthropic / OpenAI / Azure OpenAI; ignored for Ollama; default 1800)
 ```
+
+## Download flags
+
+```text
+-o, --output <PATH>          Destination file or directory (default: cwd)
+--format <auto|raw>          Auto exports Google Docs / Sheets / Slides to .docx / .xlsx / .pptx; raw downloads native bytes (default auto)
+--convert                    For every extractable file, also write a `<filename>.md` markdown sidecar via the index pipeline's extractor (off by default)
+--max-size <BYTES>           Skip *conversion* of files larger than this (download itself is unconditional). Default: no cap
+--max-pdf-pages <N>          Truncate PDF conversion to first N pages. Default: full PDF
+--concurrency <N>            Parallelism cap for tree downloads, clamped to 1..=15 (default 4). Ignored when downloading a single file
+```
+
+When `<ID>` resolves to a folder, `download` recursively mirrors the subtree under `<output>/<scope-folder-name>/...`, preserving the folder structure as in Drive. With `--convert`, each extractable file gets a `<filename>.md` markdown sidecar written next to its binary; PNGs / images / unsupported MIMEs are downloaded but no sidecar is produced. Single-file `download` keeps its prior behaviour and also gains `--convert` for one-shot markdown export.
 
 ### Concurrency
 
@@ -417,11 +431,24 @@ If you switch embedding providers (e.g. from OpenAI to Voyage), the vector dimen
 |---|---|
 | `GDRIVESCOPE_MAX_SIZE` | Default `--max-size` value (bytes) |
 | `GDRIVESCOPE_MAX_PDF_PAGES` | Default `--max-pdf-pages` value |
-| `GDRIVESCOPE_CONFIG` | Custom config path (default `~/.config/gdrivescope/config.toml`) |
+| `GDRIVESCOPE_CONFIG` | Custom config path (default: see [Configuration](#configuration) — platform-specific via the `dirs` crate's `config_dir()`) |
 
 ## Configuration
 
-Workspace config lives at `~/.config/gdrivescope/config.toml`:
+The workspace config and SQLite db live in the platform-specific data dir, resolved via the `dirs` crate's `config_dir()`:
+
+| Platform | Path |
+|---|---|
+| macOS | `~/Library/Application Support/gdrivescope/` |
+| Linux | `~/.config/gdrivescope/` |
+| Windows | `%APPDATA%\gdrivescope\` |
+
+Files in that directory:
+
+- `config.toml` — workspace config (LLM/embedding provider, roots, Ollama settings, extraction limits)
+- `drive.db` — single SQLite database with the indexed graph and sqlite-vec virtual table
+
+Example `config.toml`:
 
 ```toml
 [llm]
@@ -447,7 +474,7 @@ id = "1ABC..."
 label = "Team Drive"
 ```
 
-Manage roots via `gdrivescope config add-root` / `config remove-root`.
+Manage roots via `gdrivescope config add-root` / `config remove-root`. To use a non-default location, set `GDRIVESCOPE_CONFIG` to an alternative path.
 
 ## Troubleshooting
 

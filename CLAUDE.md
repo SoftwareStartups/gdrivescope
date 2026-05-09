@@ -73,7 +73,10 @@ src/
   models.rs          ApiResponse<T> JSON envelope
   formatters.rs      Human vs JSON output emitter (set_json_mode + emit)
   utils.rs           config_dir, db_path helpers
-  config.rs          TOML workspace config (~/.config/gdrivescope/config.toml)
+  config.rs          TOML workspace config at the platform-specific data dir
+                     (macOS: ~/Library/Application Support/gdrivescope/config.toml;
+                      Linux: ~/.config/gdrivescope/config.toml;
+                      Windows: %APPDATA%\gdrivescope\config.toml)
   extract.rs         Kreuzberg markdown extraction (pdf-oxide backend), zip recursion
   search.rs          sqlite-vec kNN query + post-filtering
   auth/              OAuth 2.0 + PKCE loopback, keyring vault, credential resolution
@@ -82,7 +85,8 @@ src/
   llm/               LLM + embedding provider traits, 8 provider impls, resolver
   pipeline/          Index orchestration, bounded concurrency, pruning
   cli/               clap-derive Cli + per-command implementations (login, logout,
-                     index, list, show, search, download, config, ollama)
+                     index, list, show, search, download [single-file or recursive
+                     folder w/ optional --convert markdown sidecars], config, ollama)
 ```
 
 Unit tests live inline as `#[cfg(test)] mod tests { ... }` blocks within
@@ -95,7 +99,7 @@ each module.
 - **CLI parsing:** `clap` with the `derive` feature; noun-verb dispatch via `Cmd` enum
 - **Credentials:** `keyring` crate (apple-native, windows-native, sync-secret-service); vault entries persisted as snake_case JSON under one keyring item
 - **Output:** human-readable default; `--json` flag emits `{ok, data}` / `{ok, error, code}` envelope
-- **Persistence:** single `~/.config/gdrivescope/drive.db` via `rusqlite` (bundled SQLite) + `sqlite-vec` virtual table — no system libsqlite3 dependency
+- **Persistence:** single SQLite db at the platform-specific data dir (resolved via the `dirs` crate's `config_dir()`): `~/Library/Application Support/gdrivescope/drive.db` on macOS, `~/.config/gdrivescope/drive.db` on Linux, `%APPDATA%\gdrivescope\drive.db` on Windows. Backed by `rusqlite` (bundled SQLite) + `sqlite-vec` virtual table — no system libsqlite3 dependency
 - **Document extraction:** `kreuzberg` crate with `pdf-oxide` (pure-Rust PDF, no libpdfium runtime dep), `office` (DOCX/PPTX), and `excel` (XLSX/XLS/ODS via calamine) features. PDF page caps applied via kreuzberg page markers + post-extraction truncation. Zip envelopes (e.g. Docusign) opened in-memory and recursed (depth 1).
 - **HTTP:** `reqwest` with `rustls-tls` (no OpenSSL); 3 Drive REST endpoints called directly
 - **LLM providers:** hand-rolled per-provider modules — Anthropic (tool_use + cache_control), OpenAI (json_schema strict), Azure OpenAI, Ollama (`format` param + retry-on-malformed)
