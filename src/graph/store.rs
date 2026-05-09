@@ -444,10 +444,25 @@ impl Store {
         Ok(())
     }
 
-    pub fn clear_embedded_hashes(&self) -> Result<(), CliError> {
-        self.conn
-            .execute("UPDATE nodes SET last_embedded_hash = NULL", [])
-            .map_err(map_err("clear last_embedded_hash"))?;
+    pub fn clear_embedded_hashes_for_ids(&self, ids: &[String]) -> Result<(), CliError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(map_err("begin clear_embedded_hashes tx"))?;
+        {
+            let mut stmt = tx
+                .prepare_cached("UPDATE nodes SET last_embedded_hash = NULL WHERE id = ?")
+                .map_err(map_err("prepare clear_embedded_hashes"))?;
+            for id in ids {
+                stmt.execute(params![id])
+                    .map_err(map_err("clear last_embedded_hash"))?;
+            }
+        }
+        tx.commit()
+            .map_err(map_err("commit clear_embedded_hashes tx"))?;
         Ok(())
     }
 
@@ -870,8 +885,49 @@ mod tests {
                 .as_deref(),
             Some("deadbeef"),
         );
-        s.clear_embedded_hashes().unwrap();
+        s.clear_embedded_hashes_for_ids(&["a".to_string()]).unwrap();
         assert_eq!(s.get_node("a").unwrap().unwrap().last_embedded_hash, None);
+    }
+
+    #[test]
+    fn clear_embedded_hashes_for_ids_only_touches_listed() {
+        let s = Store::open_in_memory().unwrap();
+        s.upsert_node(&input("a", None, "alpha")).unwrap();
+        s.upsert_node(&input("b", None, "beta")).unwrap();
+        s.upsert_node(&input("c", None, "gamma")).unwrap();
+        s.mark_embedded("a", "h-a").unwrap();
+        s.mark_embedded("b", "h-b").unwrap();
+        s.mark_embedded("c", "h-c").unwrap();
+
+        s.clear_embedded_hashes_for_ids(&["a".to_string(), "b".to_string()])
+            .unwrap();
+
+        assert_eq!(s.get_node("a").unwrap().unwrap().last_embedded_hash, None);
+        assert_eq!(s.get_node("b").unwrap().unwrap().last_embedded_hash, None);
+        assert_eq!(
+            s.get_node("c")
+                .unwrap()
+                .unwrap()
+                .last_embedded_hash
+                .as_deref(),
+            Some("h-c"),
+        );
+    }
+
+    #[test]
+    fn clear_embedded_hashes_for_ids_empty_is_noop() {
+        let s = Store::open_in_memory().unwrap();
+        s.upsert_node(&input("a", None, "doc")).unwrap();
+        s.mark_embedded("a", "h-a").unwrap();
+        s.clear_embedded_hashes_for_ids(&[]).unwrap();
+        assert_eq!(
+            s.get_node("a")
+                .unwrap()
+                .unwrap()
+                .last_embedded_hash
+                .as_deref(),
+            Some("h-a"),
+        );
     }
 
     #[test]

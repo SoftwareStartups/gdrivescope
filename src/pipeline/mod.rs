@@ -230,11 +230,11 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
         opts.store
             .init_vector_table(embedding.dimensions(), opts.rebuild_embeddings)?;
         if opts.rebuild_embeddings {
-            opts.store.clear_embedded_hashes()?;
-            // Mirror in-memory: clear last_embedded_hash on every node.
-            let ids: Vec<String> = graph.nodes().map(|n| n.id.clone()).collect();
-            for id in ids {
-                if let Some(n) = graph.get_mut(&id) {
+            let scope_ids: Vec<String> = scope_set.iter().cloned().collect();
+            opts.store.clear_embedded_hashes_for_ids(&scope_ids)?;
+            // Mirror in-memory for the same scope so the embed-loop sees fresh state.
+            for id in &scope_ids {
+                if let Some(n) = graph.get_mut(id) {
                     n.last_embedded_hash = None;
                 }
             }
@@ -242,7 +242,8 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
         let to_embed: Vec<&Node> = graph
             .nodes()
             .filter(|n| {
-                n.extracted_md.is_some()
+                scope_set.contains(&n.id)
+                    && n.extracted_md.is_some()
                     && n.content_hash.is_some()
                     && n.content_hash != n.last_embedded_hash
             })
