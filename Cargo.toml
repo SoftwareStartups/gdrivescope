@@ -47,11 +47,12 @@ futures = "0.3"
 
 # Document extraction: native Rust Kreuzberg with the pure-Rust pdf-oxide
 # backend — no libpdfium runtime dep, single static binary preserved.
-kreuzberg = { version = "4", default-features = false, features = ["pdf", "pdf-oxide", "office", "html", "xml", "email", "tokio-runtime"] }
+# `office` covers DOCX/PPTX, `excel` covers XLSX/XLS/ODS via calamine.
+kreuzberg = { version = "4", default-features = false, features = ["pdf", "pdf-oxide", "office", "excel", "html", "xml", "email", "tokio-runtime"] }
 
-# PDF page slicing: rewrite a PDF in memory to keep only the first N pages
-# before handing it to Kreuzberg. Pure Rust, no system deps.
-lopdf = "0.34"
+# Archive recursion: open zip envelopes (e.g. Docusign exports) and feed
+# each inner document back through the extractor. Pure Rust, no system deps.
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 # LLM + embedding HTTP clients (~80 LOC each on top of the shared
 # `llm::http` helper). Hand-rolled because rig-core's builder/storage

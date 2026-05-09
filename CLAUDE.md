@@ -74,7 +74,7 @@ src/
   formatters.rs      Human vs JSON output emitter (set_json_mode + emit)
   utils.rs           config_dir, db_path helpers
   config.rs          TOML workspace config (~/.config/gdrivescope/config.toml)
-  extract.rs         Kreuzberg markdown extraction (pdf-oxide backend)
+  extract.rs         Kreuzberg markdown extraction (pdf-oxide backend), zip recursion
   search.rs          sqlite-vec kNN query + post-filtering
   auth/              OAuth 2.0 + PKCE loopback, keyring vault, credential resolution
   drive/             Google Drive API client, BFS traversal, download/exports, ancestry
@@ -96,7 +96,7 @@ each module.
 - **Credentials:** `keyring` crate (apple-native, windows-native, sync-secret-service); vault entries persisted as snake_case JSON under one keyring item
 - **Output:** human-readable default; `--json` flag emits `{ok, data}` / `{ok, error, code}` envelope
 - **Persistence:** single `~/.config/gdrivescope/drive.db` via `rusqlite` (bundled SQLite) + `sqlite-vec` virtual table — no system libsqlite3 dependency
-- **Document extraction:** `kreuzberg` crate with the `pdf-oxide` feature — pure-Rust PDF extraction, no libpdfium runtime dependency
+- **Document extraction:** `kreuzberg` crate with `pdf-oxide` (pure-Rust PDF, no libpdfium runtime dep), `office` (DOCX/PPTX), and `excel` (XLSX/XLS/ODS via calamine) features. PDF page caps applied via kreuzberg page markers + post-extraction truncation. Zip envelopes (e.g. Docusign) opened in-memory and recursed (depth 1).
 - **HTTP:** `reqwest` with `rustls-tls` (no OpenSSL); 3 Drive REST endpoints called directly
 - **LLM providers:** hand-rolled per-provider modules — Anthropic (tool_use + cache_control), OpenAI (json_schema strict), Azure OpenAI, Ollama (`format` param + retry-on-malformed)
 - **Embedding providers:** OpenAI, Azure OpenAI, Voyage (output_dimension), Ollama
