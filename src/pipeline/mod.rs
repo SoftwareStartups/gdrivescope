@@ -30,7 +30,7 @@ use crate::graph::model::{DriveGraph, DriveNodeInput, Node};
 use crate::graph::paths::{descendants, node_path};
 use crate::graph::store::{Store, SummaryUpdate};
 use crate::llm::embedding::EmbeddingProvider;
-use crate::llm::provider::{LlmProvider, LlmSummarizeInput};
+use crate::llm::provider::{BatchOptions, LlmProvider, LlmSummarizeInput, LlmSummary};
 use crate::pipeline::pruning::{compute_prune_set, PruneSetInput};
 
 /// Embed the first 2000 chars of each document. Most embedding models cap
@@ -61,6 +61,9 @@ pub struct RunIndexOpts {
     pub llm_concurrency: Option<usize>,
     pub resume: bool,
     pub prune: bool,
+    /// Tunables for the async Batch API path. Only consulted when the
+    /// resolved LLM provider returns `supports_batch() == true`.
+    pub batch_options: BatchOptions,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -190,37 +193,54 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
         })
         .collect();
 
-    let mut tasks = Vec::with_capacity(work_with_paths.len());
-    for (node, path) in work_with_paths {
-        let drive_sem = drive_sem.clone();
-        let llm_sem = llm_sem.clone();
-        let client = opts.client.clone();
-        let llm = llm.clone();
-        let workdir_path = workdir.path().to_path_buf();
-        let max_size = opts.max_size_bytes;
-        let max_pdf_pages = opts.max_pdf_pages;
-        tasks.push(tokio::spawn(async move {
-            process_one(
-                node,
-                path,
-                client,
-                llm,
-                drive_sem,
-                llm_sem,
-                workdir_path,
-                max_size,
-                max_pdf_pages,
-            )
-            .await
-        }));
-    }
+    if llm.supports_batch() {
+        run_batch_summarization(
+            work_with_paths,
+            opts.client.clone(),
+            llm.clone(),
+            drive_sem.clone(),
+            workdir.path().to_path_buf(),
+            opts.max_size_bytes,
+            opts.max_pdf_pages,
+            &opts.batch_options,
+            &opts.store,
+            &mut graph,
+            &mut stats,
+        )
+        .await?;
+    } else {
+        let mut tasks = Vec::with_capacity(work_with_paths.len());
+        for (node, path) in work_with_paths {
+            let drive_sem = drive_sem.clone();
+            let llm_sem = llm_sem.clone();
+            let client = opts.client.clone();
+            let llm = llm.clone();
+            let workdir_path = workdir.path().to_path_buf();
+            let max_size = opts.max_size_bytes;
+            let max_pdf_pages = opts.max_pdf_pages;
+            tasks.push(tokio::spawn(async move {
+                process_one(
+                    node,
+                    path,
+                    client,
+                    llm,
+                    drive_sem,
+                    llm_sem,
+                    workdir_path,
+                    max_size,
+                    max_pdf_pages,
+                )
+                .await
+            }));
+        }
 
-    // Apply outcomes sequentially (Store is !Sync).
-    for task in tasks {
-        let outcome = task
-            .await
-            .map_err(|e| CliError::new(format!("process join: {e}"), ErrorCode::Unknown))?;
-        apply_outcome(&opts.store, &mut graph, &mut stats, outcome);
+        // Apply outcomes sequentially (Store is !Sync).
+        for task in tasks {
+            let outcome = task
+                .await
+                .map_err(|e| CliError::new(format!("process join: {e}"), ErrorCode::Unknown))?;
+            apply_outcome(&opts.store, &mut graph, &mut stats, outcome);
+        }
     }
 
     stats.process_ms = process_start.elapsed().as_millis();
@@ -353,6 +373,132 @@ enum ProcessResult {
     Failed(CliError),
 }
 
+/// Output of the download+extract phase, decoupled from LLM summarization.
+/// Used by both the sync per-file path and the batch path.
+enum FetchOutcome {
+    /// Ready for summarization — markdown extracted, content hash unique.
+    Ready {
+        markdown: String,
+        hash: String,
+        download_mime: String,
+    },
+    AlreadyCached,
+    Skipped(String),
+    Failed(CliError),
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fetch_and_extract(
+    node: &Node,
+    client: &DriveClient,
+    drive_sem: Arc<Semaphore>,
+    workdir: std::path::PathBuf,
+    max_size_bytes: u64,
+    max_pdf_pages: usize,
+) -> FetchOutcome {
+    if let Some(size) = node.size {
+        if size > max_size_bytes {
+            return FetchOutcome::Skipped(format!(
+                "skipped: too large ({} bytes > {})",
+                size, max_size_bytes,
+            ));
+        }
+    }
+
+    let _drive_permit = match drive_sem.acquire().await {
+        Ok(p) => p,
+        Err(e) => {
+            return FetchOutcome::Failed(CliError::new(
+                format!("drive sem: {e}"),
+                ErrorCode::Unknown,
+            ))
+        }
+    };
+    let dest = workdir.join(&node.id);
+    let target = DownloadTargetFile {
+        id: node.id.clone(),
+        name: node.name.clone(),
+        mime_type: node.mime_type.clone(),
+    };
+    let download = match download_to_file(
+        client,
+        &target,
+        &dest,
+        DownloadFormat::Auto,
+        &text_export_map(),
+    )
+    .await
+    {
+        Ok(d) => d,
+        Err(e) => return FetchOutcome::Failed(e),
+    };
+
+    let raw = match tokio::fs::read(&download.output_path).await {
+        Ok(b) => b,
+        Err(e) => {
+            return FetchOutcome::Failed(CliError::new(
+                format!("read downloaded file: {e}"),
+                ErrorCode::Unknown,
+            ));
+        }
+    };
+    let download_mime = download.mime_type.clone();
+
+    let markdown = if download_mime == "text/plain" || download_mime == "text/csv" {
+        String::from_utf8_lossy(&raw).into_owned()
+    } else {
+        if (raw.len() as u64) > max_size_bytes {
+            return FetchOutcome::Skipped(format!(
+                "skipped: too large after download ({} bytes)",
+                raw.len(),
+            ));
+        }
+        let opts = ExtractOptions {
+            max_pdf_pages: (max_pdf_pages > 0).then_some(max_pdf_pages),
+        };
+        match extract_to_markdown(raw, &download_mime, opts).await {
+            Ok(m) => m,
+            Err(e) => return FetchOutcome::Failed(e),
+        }
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(markdown.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+
+    if node.content_hash.as_deref() == Some(&hash) && node.summary.is_some() {
+        return FetchOutcome::AlreadyCached;
+    }
+
+    FetchOutcome::Ready {
+        markdown,
+        hash,
+        download_mime,
+    }
+}
+
+fn make_outcome(node: &Node, result: ProcessResult) -> ProcessOutcome {
+    ProcessOutcome {
+        node_id: node.id.clone(),
+        node_name: node.name.clone(),
+        node_mime: node.mime_type.clone(),
+        node_size: node.size,
+        result,
+    }
+}
+
+fn summarized_from(markdown: String, hash: String, summary: LlmSummary) -> ProcessResult {
+    let key_topics_json =
+        serde_json::to_string(&summary.key_topics).unwrap_or_else(|_| "[]".into());
+    ProcessResult::Summarized {
+        markdown,
+        hash,
+        summary: summary.summary,
+        classification: summary.classification.as_str().to_string(),
+        key_topics_json,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_one(
     node: Node,
@@ -365,107 +511,34 @@ async fn process_one(
     max_size_bytes: u64,
     max_pdf_pages: usize,
 ) -> ProcessOutcome {
-    let outcome_meta = (
-        node.id.clone(),
-        node.name.clone(),
-        node.mime_type.clone(),
-        node.size,
-    );
-    let make = |result: ProcessResult| ProcessOutcome {
-        node_id: outcome_meta.0.clone(),
-        node_name: outcome_meta.1.clone(),
-        node_mime: outcome_meta.2.clone(),
-        node_size: outcome_meta.3,
-        result,
+    let fetched = fetch_and_extract(
+        &node,
+        &client,
+        drive_sem,
+        workdir,
+        max_size_bytes,
+        max_pdf_pages,
+    )
+    .await;
+    let (markdown, hash, download_mime) = match fetched {
+        FetchOutcome::Ready {
+            markdown,
+            hash,
+            download_mime,
+        } => (markdown, hash, download_mime),
+        FetchOutcome::AlreadyCached => return make_outcome(&node, ProcessResult::AlreadyCached),
+        FetchOutcome::Skipped(s) => return make_outcome(&node, ProcessResult::Skipped(s)),
+        FetchOutcome::Failed(e) => return make_outcome(&node, ProcessResult::Failed(e)),
     };
-
-    if let Some(size) = node.size {
-        if size > max_size_bytes {
-            return make(ProcessResult::Skipped(format!(
-                "skipped: too large ({} bytes > {})",
-                size, max_size_bytes,
-            )));
-        }
-    }
-
-    // ── Drive phase: download + extract + hash ──────────────────────────
-    let (markdown, download_mime, hash) = {
-        let _drive_permit = match drive_sem.acquire().await {
-            Ok(p) => p,
-            Err(e) => {
-                return make(ProcessResult::Failed(CliError::new(
-                    format!("drive sem: {e}"),
-                    ErrorCode::Unknown,
-                )))
-            }
-        };
-        let dest = workdir.join(&node.id);
-        let target = DownloadTargetFile {
-            id: node.id.clone(),
-            name: node.name.clone(),
-            mime_type: node.mime_type.clone(),
-        };
-        let download = match download_to_file(
-            &client,
-            &target,
-            &dest,
-            DownloadFormat::Auto,
-            &text_export_map(),
-        )
-        .await
-        {
-            Ok(d) => d,
-            Err(e) => return make(ProcessResult::Failed(e)),
-        };
-
-        let raw = match tokio::fs::read(&download.output_path).await {
-            Ok(b) => b,
-            Err(e) => {
-                return make(ProcessResult::Failed(CliError::new(
-                    format!("read downloaded file: {e}"),
-                    ErrorCode::Unknown,
-                )));
-            }
-        };
-        let download_mime = download.mime_type.clone();
-
-        let markdown = if download_mime == "text/plain" || download_mime == "text/csv" {
-            String::from_utf8_lossy(&raw).into_owned()
-        } else {
-            if (raw.len() as u64) > max_size_bytes {
-                return make(ProcessResult::Skipped(format!(
-                    "skipped: too large after download ({} bytes)",
-                    raw.len(),
-                )));
-            }
-            let opts = ExtractOptions {
-                max_pdf_pages: (max_pdf_pages > 0).then_some(max_pdf_pages),
-            };
-            match extract_to_markdown(raw, &download_mime, opts).await {
-                Ok(m) => m,
-                Err(e) => return make(ProcessResult::Failed(e)),
-            }
-        };
-
-        let mut hasher = Sha256::new();
-        hasher.update(markdown.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
-
-        if node.content_hash.as_deref() == Some(&hash) && node.summary.is_some() {
-            return make(ProcessResult::AlreadyCached);
-        }
-
-        (markdown, download_mime, hash)
-    }; // drive permit dropped here
 
     // ── LLM phase: summarize ────────────────────────────────────────────
     let _llm_permit = match llm_sem.acquire().await {
         Ok(p) => p,
         Err(e) => {
-            return make(ProcessResult::Failed(CliError::new(
-                format!("llm sem: {e}"),
-                ErrorCode::Unknown,
-            )))
+            return make_outcome(
+                &node,
+                ProcessResult::Failed(CliError::new(format!("llm sem: {e}"), ErrorCode::Unknown)),
+            )
         }
     };
     let summary = match llm
@@ -473,24 +546,134 @@ async fn process_one(
             markdown: markdown.clone(),
             filename: node.name.clone(),
             path,
-            mime_type: download_mime.clone(),
+            mime_type: download_mime,
         })
         .await
     {
         Ok(s) => s,
-        Err(e) => return make(ProcessResult::Failed(e)),
+        Err(e) => return make_outcome(&node, ProcessResult::Failed(e)),
     };
-    let key_topics_json =
-        serde_json::to_string(&summary.key_topics).unwrap_or_else(|_| "[]".into());
+    make_outcome(&node, summarized_from(markdown, hash, summary))
+}
 
-    let _ = download_mime;
-    make(ProcessResult::Summarized {
-        markdown,
-        hash,
-        summary: summary.summary,
-        classification: summary.classification.as_str().to_string(),
-        key_topics_json,
-    })
+/// Batch path: download + extract every node concurrently, then ship all
+/// `Ready` inputs as a single provider-side batch (50% token discount on
+/// Anthropic / OpenAI / Azure). Stitches per-item batch results back into
+/// the original order before applying outcomes.
+#[allow(clippy::too_many_arguments)]
+async fn run_batch_summarization(
+    work_with_paths: Vec<(Node, String)>,
+    client: DriveClient,
+    llm: Arc<dyn LlmProvider>,
+    drive_sem: Arc<Semaphore>,
+    workdir_path: std::path::PathBuf,
+    max_size_bytes: u64,
+    max_pdf_pages: usize,
+    batch_options: &BatchOptions,
+    store: &Store,
+    graph: &mut DriveGraph,
+    stats: &mut IndexStats,
+) -> Result<(), CliError> {
+    // Phase A: fetch + extract every file concurrently (drive_sem only).
+    let mut fetch_tasks = Vec::with_capacity(work_with_paths.len());
+    for (node, path) in work_with_paths {
+        let client = client.clone();
+        let drive_sem = drive_sem.clone();
+        let workdir = workdir_path.clone();
+        fetch_tasks.push(tokio::spawn(async move {
+            let outcome = fetch_and_extract(
+                &node,
+                &client,
+                drive_sem,
+                workdir,
+                max_size_bytes,
+                max_pdf_pages,
+            )
+            .await;
+            (node, path, outcome)
+        }));
+    }
+    let mut fetched: Vec<(Node, String, FetchOutcome)> = Vec::with_capacity(fetch_tasks.len());
+    for task in fetch_tasks {
+        let triple = task
+            .await
+            .map_err(|e| CliError::new(format!("fetch join: {e}"), ErrorCode::Unknown))?;
+        fetched.push(triple);
+    }
+
+    // Phase B: collect Ready inputs and remember which fetched-index each
+    // batch slot maps back to.
+    let mut ready_indices: Vec<usize> = Vec::new();
+    let mut ready_inputs: Vec<LlmSummarizeInput> = Vec::new();
+    for (i, (node, path, outcome)) in fetched.iter().enumerate() {
+        if let FetchOutcome::Ready {
+            markdown,
+            download_mime,
+            ..
+        } = outcome
+        {
+            ready_indices.push(i);
+            ready_inputs.push(LlmSummarizeInput {
+                markdown: markdown.clone(),
+                filename: node.name.clone(),
+                path: path.clone(),
+                mime_type: download_mime.clone(),
+            });
+        }
+    }
+
+    // Phase C: single batch call (or skip if there's nothing new).
+    let mut batch_results: Vec<Result<LlmSummary, CliError>> = if ready_inputs.is_empty() {
+        Vec::new()
+    } else {
+        eprintln!(
+            "info: index: submitting {} summary request(s) as a single {} batch (waits up to {}s)",
+            ready_inputs.len(),
+            llm.name(),
+            batch_options.timeout.as_secs(),
+        );
+        llm.summarize_batch(&ready_inputs, batch_options).await?
+    };
+    if batch_results.len() != ready_inputs.len() {
+        return Err(CliError::new(
+            format!(
+                "{} batch returned {} results for {} inputs",
+                llm.name(),
+                batch_results.len(),
+                ready_inputs.len(),
+            ),
+            ErrorCode::LlmBatchPollFailed,
+        ));
+    }
+
+    // Phase D: stitch per-item results back into fetched order, then
+    // serialize through `apply_outcome` (Store is !Sync — writes happen
+    // sequentially on the orchestrator task).
+    let mut summary_by_idx: std::collections::HashMap<usize, Result<LlmSummary, CliError>> =
+        std::collections::HashMap::with_capacity(ready_indices.len());
+    for (idx, result) in ready_indices.into_iter().zip(batch_results.drain(..)) {
+        summary_by_idx.insert(idx, result);
+    }
+
+    for (i, (node, _path, outcome)) in fetched.into_iter().enumerate() {
+        let result = match outcome {
+            FetchOutcome::AlreadyCached => ProcessResult::AlreadyCached,
+            FetchOutcome::Skipped(s) => ProcessResult::Skipped(s),
+            FetchOutcome::Failed(e) => ProcessResult::Failed(e),
+            FetchOutcome::Ready { markdown, hash, .. } => match summary_by_idx.remove(&i) {
+                Some(Ok(summary)) => summarized_from(markdown, hash, summary),
+                Some(Err(e)) => ProcessResult::Failed(e),
+                None => ProcessResult::Failed(CliError::new(
+                    "missing batch result for input",
+                    ErrorCode::LlmBatchPollFailed,
+                )),
+            },
+        };
+        let outcome = make_outcome(&node, result);
+        apply_outcome(store, graph, stats, outcome);
+    }
+
+    Ok(())
 }
 
 fn apply_outcome(

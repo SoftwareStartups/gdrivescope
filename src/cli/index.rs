@@ -9,6 +9,7 @@ use crate::drive::client::DriveClient;
 use crate::error::CliError;
 use crate::formatters::emit;
 use crate::graph::store::Store;
+use crate::llm::provider::BatchOptions;
 use crate::llm::resolver::{
     resolve_embedding_provider, resolve_llm_provider, ResolveEmbeddingOptions, ResolveLlmOptions,
 };
@@ -18,6 +19,7 @@ use crate::utils::db_path;
 
 const DEFAULT_MAX_SIZE_BYTES: u64 = 20 * 1024 * 1024;
 const DEFAULT_MAX_PDF_PAGES: usize = 10;
+const DEFAULT_BATCH_TIMEOUT_SECS: u64 = 1800;
 
 #[derive(Args, Debug, Clone)]
 pub struct IndexArgs {
@@ -58,6 +60,10 @@ pub struct IndexArgs {
     /// Slice PDFs to first N pages before extraction (default 10).
     #[arg(long = "max-pdf-pages")]
     pub max_pdf_pages: Option<usize>,
+    /// Maximum seconds to wait for the provider's async batch to complete
+    /// (Anthropic / OpenAI / Azure OpenAI; ignored for Ollama). Default 1800.
+    #[arg(long = "batch-timeout-secs")]
+    pub batch_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +101,7 @@ pub async fn execute(args: IndexArgs) -> Result<(), CliError> {
 
     let max_size_bytes = resolve_max_size(args.max_size, &cfg);
     let max_pdf_pages = resolve_max_pdf_pages(args.max_pdf_pages, &cfg);
+    let batch_options = resolve_batch_options(args.batch_timeout_secs);
 
     let vault = KeyringVault::new();
     let required_scope = if args.metadata_only {
@@ -184,6 +191,7 @@ pub async fn execute(args: IndexArgs) -> Result<(), CliError> {
             llm_concurrency: args.concurrency_llm,
             resume: args.resume,
             prune: args.prune,
+            batch_options,
         })
         .await?;
 
@@ -274,6 +282,20 @@ fn resolve_max_pdf_pages(flag: Option<usize>, cfg: &crate::config::WorkspaceConf
         .as_ref()
         .and_then(|e| e.max_pdf_pages)
         .unwrap_or(DEFAULT_MAX_PDF_PAGES)
+}
+
+fn resolve_batch_options(flag: Option<u64>) -> BatchOptions {
+    let secs = flag
+        .or_else(|| {
+            std::env::var("GDRIVESCOPE_LLM_BATCH_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+        })
+        .unwrap_or(DEFAULT_BATCH_TIMEOUT_SECS);
+    BatchOptions {
+        timeout: std::time::Duration::from_secs(secs),
+        ..BatchOptions::default()
+    }
 }
 
 fn render(d: &IndexData) -> String {

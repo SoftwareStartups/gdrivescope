@@ -1,3 +1,4 @@
+pub mod batch;
 pub mod classification;
 pub mod embed_batch;
 pub mod embedding;
