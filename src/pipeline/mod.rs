@@ -186,6 +186,7 @@ pub async fn run_index_pipeline(opts: RunIndexOpts) -> Result<IndexStats, CliErr
 
     let work = build_work_list(&graph, &scope_set, opts.resume);
     stats.skipped += work.skipped;
+    stats.cached += work.cached;
 
     let process_start = Instant::now();
 
@@ -325,11 +326,16 @@ fn resolve_llm_concurrency(llm: &dyn LlmProvider, explicit: Option<usize>) -> us
 struct WorkList {
     work: Vec<Node>,
     skipped: u64,
+    /// Nodes short-circuited because the freshly-traversed `modified_time`
+    /// matches the `summary_modified_time` recorded at the last summary —
+    /// no download or extract needed. Folded into `IndexStats.cached`.
+    cached: u64,
 }
 
 fn build_work_list(graph: &DriveGraph, scope_set: &HashSet<String>, resume: bool) -> WorkList {
     let mut work = Vec::new();
     let mut skipped: u64 = 0;
+    let mut cached: u64 = 0;
     for node in graph.nodes() {
         if !scope_set.contains(&node.id) {
             continue;
@@ -342,6 +348,22 @@ fn build_work_list(graph: &DriveGraph, scope_set: &HashSet<String>, resume: bool
         if !should_extract(&node.mime_type) {
             skipped += 1;
             continue;
+        }
+        // modifiedTime short-circuit: if Drive's freshly-fetched
+        // modifiedTime matches what it was when we wrote the summary, the
+        // file's content hasn't changed and we can skip download+extract
+        // entirely. The post-download content_hash check in
+        // fetch_and_extract remains as a safety net for cases where Drive
+        // bumps modifiedTime without a content change (move, owner edit).
+        if let (Some(stored), Some(_), Some(fresh)) = (
+            node.summary_modified_time.as_deref(),
+            node.summary.as_deref(),
+            node.modified_time.as_deref(),
+        ) {
+            if stored == fresh {
+                cached += 1;
+                continue;
+            }
         }
         if resume {
             let summary_done = node.summary.is_some() && node.last_error.is_none();
@@ -356,7 +378,11 @@ fn build_work_list(graph: &DriveGraph, scope_set: &HashSet<String>, resume: bool
         }
         work.push(node.clone());
     }
-    WorkList { work, skipped }
+    WorkList {
+        work,
+        skipped,
+        cached,
+    }
 }
 
 #[derive(Debug)]
@@ -365,6 +391,10 @@ struct ProcessOutcome {
     node_name: String,
     node_mime: String,
     node_size: Option<u64>,
+    /// `modified_time` as seen on this run's traversal — captured here so
+    /// `apply_outcome` can persist it as the new `summary_modified_time`
+    /// when we successfully (re)summarise the file.
+    node_modified_time: Option<String>,
     result: ProcessResult,
 }
 
@@ -504,6 +534,7 @@ fn make_outcome(node: &Node, result: ProcessResult) -> ProcessOutcome {
         node_name: node.name.clone(),
         node_mime: node.mime_type.clone(),
         node_size: node.size,
+        node_modified_time: node.modified_time.clone(),
         result,
     }
 }
@@ -742,6 +773,7 @@ fn apply_outcome(
                 key_topics: key_topics_json.clone(),
                 extracted_md: markdown.clone(),
                 content_hash: hash.clone(),
+                summary_modified_time: outcome.node_modified_time.clone(),
             };
             store.update_summary(&outcome.node_id, &patch)?;
             stats.summarized += 1;
@@ -753,6 +785,7 @@ fn apply_outcome(
                 n.extracted_md = Some(markdown);
                 n.content_hash = Some(hash);
                 n.last_error = None;
+                n.summary_modified_time = outcome.node_modified_time;
             }
         }
     }
@@ -795,7 +828,24 @@ mod tests {
             last_embedded_hash: None,
             last_indexed: None,
             last_error: last_error.map(str::to_string),
+            summary_modified_time: None,
         }
+    }
+
+    /// Variant that lets tests set the traversal-fresh `modified_time` and
+    /// the previously-stored `summary_modified_time` independently. Used by
+    /// the cache-shortcut suite below.
+    fn n_with_mtimes(
+        id: &str,
+        mime: &str,
+        summary: Option<&str>,
+        modified_time: Option<&str>,
+        summary_modified_time: Option<&str>,
+    ) -> Node {
+        let mut node = n(id, mime, summary, None);
+        node.modified_time = modified_time.map(str::to_string);
+        node.summary_modified_time = summary_modified_time.map(str::to_string);
+        node
     }
 
     fn full_scope(g: &DriveGraph) -> HashSet<String> {
@@ -841,6 +891,77 @@ mod tests {
         let scope = full_scope(&g);
         let wl = build_work_list(&g, &scope, false);
         assert_eq!(wl.work.len(), 1);
+    }
+
+    #[test]
+    fn build_work_list_short_circuits_when_modtime_matches() {
+        let mut g = DriveGraph::new();
+        g.add_node(n_with_mtimes(
+            "cached",
+            "application/pdf",
+            Some("S"),
+            Some("2026-01-01T00:00:00.000Z"),
+            Some("2026-01-01T00:00:00.000Z"),
+        ));
+        let scope = full_scope(&g);
+        let wl = build_work_list(&g, &scope, false);
+        assert!(wl.work.is_empty(), "match should suppress work");
+        assert_eq!(wl.cached, 1);
+        assert_eq!(wl.skipped, 0);
+    }
+
+    #[test]
+    fn build_work_list_processes_when_modtime_drifts() {
+        let mut g = DriveGraph::new();
+        g.add_node(n_with_mtimes(
+            "drifted",
+            "application/pdf",
+            Some("S"),
+            Some("2026-02-01T00:00:00.000Z"), // freshly traversed
+            Some("2026-01-01T00:00:00.000Z"), // last summary's mtime
+        ));
+        let scope = full_scope(&g);
+        let wl = build_work_list(&g, &scope, false);
+        assert_eq!(wl.work.len(), 1);
+        assert_eq!(wl.work[0].id, "drifted");
+        assert_eq!(wl.cached, 0);
+    }
+
+    #[test]
+    fn build_work_list_processes_when_no_summary_modified_time() {
+        // Pre-migration row: summary present but no summary_modified_time.
+        // Must fall through to the normal flow so the next run captures it.
+        let mut g = DriveGraph::new();
+        g.add_node(n_with_mtimes(
+            "legacy",
+            "application/pdf",
+            Some("S"),
+            Some("2026-01-01T00:00:00.000Z"),
+            None,
+        ));
+        let scope = full_scope(&g);
+        let wl = build_work_list(&g, &scope, false);
+        assert_eq!(wl.work.len(), 1);
+        assert_eq!(wl.work[0].id, "legacy");
+        assert_eq!(wl.cached, 0);
+    }
+
+    #[test]
+    fn build_work_list_short_circuit_supersedes_resume_filter() {
+        // With --resume, an already-summarised node is normally filtered;
+        // the cache short-circuit fires first and counts it as cached.
+        let mut g = DriveGraph::new();
+        g.add_node(n_with_mtimes(
+            "cached",
+            "application/pdf",
+            Some("S"),
+            Some("2026-01-01T00:00:00.000Z"),
+            Some("2026-01-01T00:00:00.000Z"),
+        ));
+        let scope = full_scope(&g);
+        let wl = build_work_list(&g, &scope, true);
+        assert!(wl.work.is_empty());
+        assert_eq!(wl.cached, 1);
     }
 
     #[test]

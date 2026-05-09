@@ -5,6 +5,7 @@
 //! sqlite-vec is registered once via `sqlite3_auto_extension` so every
 //! subsequent `Connection::open*` picks it up automatically.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Once;
 
@@ -28,6 +29,11 @@ pub struct SummaryUpdate {
     pub key_topics: String,
     pub extracted_md: String,
     pub content_hash: String,
+    /// `modified_time` of the node *as observed by the traversal that
+    /// produced this summary*. Stored verbatim so a future run can compare
+    /// against the freshly-fetched value and short-circuit before paying
+    /// for a download + extract.
+    pub summary_modified_time: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +103,30 @@ impl Store {
         self.conn
             .execute_batch(SCHEMA_DDL)
             .map_err(map_err("init schema"))?;
+        self.migrate_nodes_schema()?;
+        Ok(())
+    }
+
+    /// Apply additive `nodes`-table column migrations idempotently. Reads
+    /// `PRAGMA table_info(nodes)` once, then issues `ALTER TABLE … ADD
+    /// COLUMN` for any column the current binary expects but the existing
+    /// db is missing. Pre-existing rows get `NULL` for new columns.
+    fn migrate_nodes_schema(&self) -> Result<(), CliError> {
+        let existing: HashSet<String> = self
+            .conn
+            .prepare("PRAGMA table_info(nodes)")
+            .map_err(map_err("prepare table_info"))?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(map_err("query table_info"))?
+            .collect::<Result<HashSet<_>, _>>()
+            .map_err(map_err("collect table_info"))?;
+        for (col, ddl) in NODES_ADDITIVE_COLUMNS {
+            if !existing.contains(*col) {
+                self.conn
+                    .execute(ddl, [])
+                    .map_err(map_err("ALTER TABLE nodes ADD COLUMN"))?;
+            }
+        }
         Ok(())
     }
 
@@ -267,13 +297,14 @@ impl Store {
             .prepare_cached(
                 r#"
                 UPDATE nodes SET
-                  summary        = ?,
-                  classification = ?,
-                  key_topics     = ?,
-                  extracted_md   = ?,
-                  content_hash   = ?,
-                  last_error     = NULL,
-                  last_indexed   = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                  summary               = ?,
+                  classification        = ?,
+                  key_topics            = ?,
+                  extracted_md          = ?,
+                  content_hash          = ?,
+                  summary_modified_time = ?,
+                  last_error            = NULL,
+                  last_indexed          = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 WHERE id = ?
                 "#,
             )
@@ -284,6 +315,7 @@ impl Store {
             patch.key_topics,
             patch.extracted_md,
             patch.content_hash,
+            patch.summary_modified_time,
             id,
         ])
         .map_err(map_err("execute update_summary"))?;
@@ -541,13 +573,23 @@ CREATE TABLE IF NOT EXISTS nodes (
   content_hash       TEXT,
   last_embedded_hash TEXT,
   last_indexed       TEXT,
-  last_error         TEXT
+  last_error         TEXT,
+  summary_modified_time TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_name   ON nodes(name);
 CREATE INDEX IF NOT EXISTS idx_nodes_mime   ON nodes(mime_type);
 CREATE INDEX IF NOT EXISTS idx_nodes_root   ON nodes(root_id);
 "#;
+
+/// Additive `nodes` column migrations applied on every `Store::open`.
+/// Order is irrelevant — each entry is a `PRAGMA table_info` lookup +
+/// idempotent `ALTER TABLE`. Append new columns here when the in-memory
+/// `Node` model gains a field that older dbs won't have.
+const NODES_ADDITIVE_COLUMNS: &[(&str, &str)] = &[(
+    "summary_modified_time",
+    "ALTER TABLE nodes ADD COLUMN summary_modified_time TEXT",
+)];
 
 const UPSERT_NODE_SQL: &str = r#"
 INSERT INTO nodes (id, parent_id, name, mime_type, size, modified_time,
@@ -600,6 +642,7 @@ fn row_to_node(row: &Row<'_>) -> rusqlite::Result<Node> {
         last_embedded_hash: row.get("last_embedded_hash")?,
         last_indexed: row.get("last_indexed")?,
         last_error: row.get("last_error")?,
+        summary_modified_time: row.get("summary_modified_time")?,
     })
 }
 
@@ -678,6 +721,7 @@ mod tests {
             "last_indexed",
             "last_error",
             "last_embedded_hash",
+            "summary_modified_time",
         ] {
             assert!(cols.iter().any(|n| n == c), "missing col {c}");
         }
@@ -761,6 +805,7 @@ mod tests {
                 key_topics: "k1,k2".into(),
                 extracted_md: "# md".into(),
                 content_hash: "abc".into(),
+                summary_modified_time: None,
             },
         )
         .unwrap();
@@ -793,6 +838,7 @@ mod tests {
                 key_topics: "".into(),
                 extracted_md: "".into(),
                 content_hash: "".into(),
+                summary_modified_time: None,
             },
         )
         .unwrap();
@@ -937,5 +983,126 @@ mod tests {
         assert!(s.has_vector_table().unwrap());
         s.clear_embeddings().unwrap();
         assert!(!s.has_vector_table().unwrap());
+    }
+
+    fn input_with_mtime(id: &str, mtime: &str) -> DriveNodeInput {
+        let mut inp = input(id, None, "doc");
+        inp.modified_time = Some(mtime.to_string());
+        inp
+    }
+
+    fn summary_patch(content_hash: &str, mtime: Option<&str>) -> SummaryUpdate {
+        SummaryUpdate {
+            summary: "S".into(),
+            classification: "doc".into(),
+            key_topics: "[]".into(),
+            extracted_md: "# md".into(),
+            content_hash: content_hash.into(),
+            summary_modified_time: mtime.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn update_summary_records_modified_time_at_summary_time() {
+        let s = Store::open_in_memory().unwrap();
+        // First traversal: modifiedTime = T1; summarise → stored mtime = T1.
+        s.upsert_node(&input_with_mtime("a", "2026-01-01T00:00:00.000Z"))
+            .unwrap();
+        s.update_summary("a", &summary_patch("h1", Some("2026-01-01T00:00:00.000Z")))
+            .unwrap();
+        let n = s.get_node("a").unwrap().unwrap();
+        assert_eq!(
+            n.summary_modified_time.as_deref(),
+            Some("2026-01-01T00:00:00.000Z"),
+        );
+
+        // Second traversal: modifiedTime bumps to T2; re-summarise → stored
+        // mtime now T2.
+        s.upsert_node(&input_with_mtime("a", "2026-02-15T12:34:56.789Z"))
+            .unwrap();
+        s.update_summary("a", &summary_patch("h2", Some("2026-02-15T12:34:56.789Z")))
+            .unwrap();
+        let n = s.get_node("a").unwrap().unwrap();
+        assert_eq!(
+            n.summary_modified_time.as_deref(),
+            Some("2026-02-15T12:34:56.789Z"),
+        );
+        // The traversal-side modified_time is also overwritten on upsert.
+        assert_eq!(n.modified_time.as_deref(), Some("2026-02-15T12:34:56.789Z"),);
+    }
+
+    #[test]
+    fn migration_adds_summary_modified_time_to_legacy_db() {
+        // Build a "legacy" db on disk: nodes table without the new column,
+        // a pre-existing row that pretends to have been summarised under
+        // the old schema.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        // Drop the empty file so rusqlite creates a fresh db.
+        drop(tmp);
+        {
+            ensure_vec_extension_registered();
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE nodes (
+                  id                 TEXT PRIMARY KEY,
+                  parent_id          TEXT,
+                  name               TEXT NOT NULL,
+                  mime_type          TEXT NOT NULL,
+                  size               INTEGER,
+                  modified_time      TEXT,
+                  created_time       TEXT,
+                  web_view_link      TEXT,
+                  root_id            TEXT,
+                  metadata_json      TEXT NOT NULL,
+                  summary            TEXT,
+                  classification     TEXT,
+                  key_topics         TEXT,
+                  extracted_md       TEXT,
+                  content_hash       TEXT,
+                  last_embedded_hash TEXT,
+                  last_indexed       TEXT,
+                  last_error         TEXT
+                );
+                INSERT INTO nodes (id, name, mime_type, modified_time, metadata_json, summary)
+                VALUES ('legacy', 'doc', 'application/pdf', '2026-01-01T00:00:00.000Z', '{}', 'old-summary');
+                "#,
+            )
+            .unwrap();
+        }
+
+        // Migration runs inside Store::open.
+        let s = Store::open(&path).unwrap();
+        let cols: Vec<String> = s
+            .conn()
+            .prepare("PRAGMA table_info(nodes)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            cols.iter().any(|c| c == "summary_modified_time"),
+            "migration should add summary_modified_time; got cols={cols:?}",
+        );
+
+        // Pre-existing summarised row gets NULL for the new column — the
+        // pipeline treats this as "summarised at unknown mtime" and forces
+        // a one-time refresh on the next index run.
+        let n = s.get_node("legacy").unwrap().unwrap();
+        assert_eq!(n.summary.as_deref(), Some("old-summary"));
+        assert_eq!(n.summary_modified_time, None);
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        // Open the same db twice; the second open should be a no-op
+        // (already-applied migrations don't fail).
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        let _s1 = Store::open(&path).unwrap();
+        let _s2 = Store::open(&path).unwrap(); // panic-on-error if migration re-applied unsafely
     }
 }

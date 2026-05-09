@@ -79,6 +79,7 @@ mod tests {
             last_embedded_hash: None,
             last_indexed: None,
             last_error: None,
+            summary_modified_time: None,
         }
     }
 

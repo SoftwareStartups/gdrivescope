@@ -32,6 +32,12 @@ pub struct Node {
     pub last_embedded_hash: Option<String>,
     pub last_indexed: Option<String>,
     pub last_error: Option<String>,
+    /// Value of `modified_time` at the moment we last persisted a summary
+    /// for this node. `None` for nodes never summarised (or rows from a
+    /// pre-migration db). Compared against the freshly-traversed
+    /// `modified_time` to short-circuit re-runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary_modified_time: Option<String>,
 }
 
 /// Upsert payload from drive traversal — the subset of node fields we
@@ -145,6 +151,7 @@ mod tests {
             last_embedded_hash: None,
             last_indexed: None,
             last_error: None,
+            summary_modified_time: None,
         }
     }
 
