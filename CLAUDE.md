@@ -98,7 +98,7 @@ each module.
 - **Runtime:** Rust 2021 edition, MSRV 1.85 (pinned in `rust-toolchain.toml`)
 - **Async:** tokio multi-thread runtime; bounded concurrency via `Arc<tokio::sync::Semaphore>`
 - **CLI parsing:** `clap` with the `derive` feature; noun-verb dispatch via `Cmd` enum
-- **Credentials:** `keyring` crate (apple-native, windows-native, sync-secret-service); vault entries persisted as snake_case JSON under one keyring item
+- **Credentials:** `keyring` crate (apple-native, windows-native, sync-secret-service); vault entries persisted as snake_case JSON under one keyring item. When no keyring backend is available (WSL2, headless Linux without secret-service), the vault transparently falls back to a `0600` `vault.json` in the config dir so `login` still persists; `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` env overrides still apply
 - **Output:** human-readable default; `--json` flag emits `{ok, data}` / `{ok, error, code}` envelope
 - **Persistence:** single SQLite db at the platform-specific data dir (resolved via the `dirs` crate's `config_dir()`): `~/Library/Application Support/gdrivescope/drive.db` on macOS, `~/.config/gdrivescope/drive.db` on Linux, `%APPDATA%\gdrivescope\drive.db` on Windows. Backed by `rusqlite` (bundled SQLite) + `sqlite-vec` virtual table — no system libsqlite3 dependency
 - **Document extraction:** `kreuzberg` crate with `pdf-oxide` (pure-Rust PDF, no libpdfium runtime dep), `office` (DOCX/PPTX), and `excel` (XLSX/XLS/ODS via calamine) features. PDF page caps applied via kreuzberg page markers + post-extraction truncation. Zip envelopes (e.g. Docusign) opened in-memory and recursed (depth 1).

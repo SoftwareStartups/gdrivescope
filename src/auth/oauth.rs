@@ -80,12 +80,23 @@ pub async fn authorize(scope: &str, creds: &OAuthCredentials) -> Result<AuthResu
         .append_pair("prompt", "consent");
 
     eprintln!("gdrivescope: listening on {redirect_uri}");
-    eprintln!(
-        "gdrivescope: opening browser — if it does not open, visit:\n{}",
-        auth_url.as_str(),
-    );
-    // Best-effort; the URL is also printed to stderr for copy-paste fallback.
-    let _ = open::that(auth_url.as_str());
+    if is_wsl() {
+        // No usable browser launcher on WSL; auto-open just errors or stalls.
+        // The Windows browser reaches this loopback listener via WSL2's
+        // default localhost forwarding, so the manual paste flow works.
+        eprintln!(
+            "gdrivescope: open this URL in your browser, then approve:\n{}\n\
+             gdrivescope: it will redirect to {redirect_uri}, captured on this machine.",
+            auth_url.as_str(),
+        );
+    } else {
+        eprintln!(
+            "gdrivescope: opening browser — if it does not open, visit:\n{}",
+            auth_url.as_str(),
+        );
+        // Best-effort; the URL is also printed to stderr for copy-paste fallback.
+        let _ = open::that(auth_url.as_str());
+    }
 
     let code = await_callback(&listener, &state).await?;
     let tokens = exchange_code(creds, &code, &verifier, &redirect_uri).await?;
@@ -348,6 +359,18 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Best-effort detection of WSL (Windows Subsystem for Linux), where there is
+/// no usable browser launcher. Checks the env vars WSL injects, then the
+/// kernel release string (`microsoft`).
+fn is_wsl() -> bool {
+    if std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some() {
+        return true;
+    }
+    std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|s| s.to_ascii_lowercase().contains("microsoft"))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

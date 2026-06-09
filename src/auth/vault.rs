@@ -3,6 +3,10 @@
 //! doesn't re-prompt the user), Linux `secret-service` via dbus, Windows
 //! Credential Manager.
 
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CliError, ErrorCode};
@@ -59,6 +63,10 @@ pub trait VaultStore: Send + Sync {
 /// work fine once the entry is permissive. The first write after a build
 /// upgrade will silently delete a previous restrictive entry (if present)
 /// so the new permissive ACL takes effect immediately.
+///
+/// When no keyring backend exists (WSL2, headless Linux without
+/// secret-service), reads and writes fall back to a `0600` `vault.json` in the
+/// config dir so `login` still persists and later commands work.
 pub struct KeyringVault;
 
 impl KeyringVault {
@@ -78,44 +86,67 @@ impl VaultStore for KeyringVault {
     async fn get(&self) -> Result<Option<Vault>, CliError> {
         // Keyring crate is sync — bounce off the blocking pool to avoid
         // tying up an async worker on a (sometimes slow) DBus call.
-        let result = tokio::task::spawn_blocking(|| {
-            let entry = match keyring::Entry::new(SERVICE, VAULT_KEY) {
-                Ok(e) => e,
-                Err(_) => return Ok::<Option<String>, CliError>(None),
-            };
-            match entry.get_password() {
-                Ok(s) => Ok(Some(s)),
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => Err(CliError::new(
-                    format!("keyring get: {e}"),
-                    ErrorCode::AuthFailed,
-                )),
+        tokio::task::spawn_blocking(|| {
+            // A keyring hit wins. Any read error (no backend, locked
+            // collection, …) is treated as "absent" so we fall through to the
+            // file vault — on WSL2 / headless Linux there is no keyring at all.
+            if let Some(v) = keyring_get_blocking() {
+                return Ok(Some(v));
             }
+            file_get_at(&vault_file_path()?)
         })
         .await
-        .map_err(|e| CliError::new(format!("blocking join: {e}"), ErrorCode::Unknown))??;
-
-        let Some(raw) = result else {
-            return Ok(None);
-        };
-        // Malformed JSON yields None rather than erroring — the user sees
-        // "auth required" and re-runs `login`, instead of a parse error.
-        Ok(serde_json::from_str::<Vault>(&raw).ok())
+        .map_err(|e| CliError::new(format!("blocking join: {e}"), ErrorCode::Unknown))?
     }
 
     async fn set(&self, vault: &Vault) -> Result<(), CliError> {
         let json = serde_json::to_string(vault)
             .map_err(|e| CliError::new(format!("vault serialize: {e}"), ErrorCode::Unknown))?;
-        tokio::task::spawn_blocking(move || set_blocking(&json))
-            .await
-            .map_err(|e| CliError::new(format!("blocking join: {e}"), ErrorCode::Unknown))?
+        tokio::task::spawn_blocking(move || {
+            match set_blocking(&json) {
+                // Keyring write succeeded — drop any stale file vault so a
+                // working keyring never leaves a divergent plaintext copy.
+                Ok(()) => {
+                    if let Ok(path) = vault_file_path() {
+                        let _ = file_clear_at(&path);
+                    }
+                    Ok(())
+                }
+                // No keyring backend (WSL2 / headless Linux). Persist to a
+                // 0600 file so login isn't lost and later commands work.
+                Err(_) => {
+                    let path = vault_file_path()?;
+                    file_set_at(&path, &json)?;
+                    eprintln!(
+                        "gdrivescope: OS keyring unavailable — stored credentials in {} (mode 0600)",
+                        path.display(),
+                    );
+                    Ok(())
+                }
+            }
+        })
+        .await
+        .map_err(|e| CliError::new(format!("blocking join: {e}"), ErrorCode::Unknown))?
     }
 
     async fn clear(&self) -> Result<bool, CliError> {
-        tokio::task::spawn_blocking(clear_blocking)
-            .await
-            .map_err(|e| CliError::new(format!("blocking join: {e}"), ErrorCode::Unknown))?
+        tokio::task::spawn_blocking(|| {
+            let from_keyring = clear_blocking()?;
+            let from_file = file_clear_at(&vault_file_path()?)?;
+            Ok(from_keyring || from_file)
+        })
+        .await
+        .map_err(|e| CliError::new(format!("blocking join: {e}"), ErrorCode::Unknown))?
     }
+}
+
+/// Read the vault JSON from the keyring, returning `None` on a missing entry
+/// **or any error** (no backend, malformed JSON, locked collection). Callers
+/// fall through to the file vault when this is `None`.
+fn keyring_get_blocking() -> Option<Vault> {
+    let entry = keyring::Entry::new(SERVICE, VAULT_KEY).ok()?;
+    let raw = entry.get_password().ok()?;
+    serde_json::from_str::<Vault>(&raw).ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -155,6 +186,68 @@ fn delete_if_present(entry: &keyring::Entry) -> bool {
         Ok(()) => true,
         Err(keyring::Error::NoEntry) => false,
         Err(_) => false,
+    }
+}
+
+/// Path to the file-vault fallback, co-located with `drive.db` in the
+/// platform config dir.
+fn vault_file_path() -> Result<PathBuf, CliError> {
+    Ok(crate::utils::config_dir()?.join("vault.json"))
+}
+
+fn io_err(context: &str, e: std::io::Error) -> CliError {
+    CliError::new(format!("{context}: {e}"), ErrorCode::AuthFailed)
+}
+
+/// Read a `Vault` from `path`. A missing file or malformed JSON yields `None`
+/// (mirrors the keyring read's tolerance — the user re-runs `login` rather than
+/// seeing a parse error).
+fn file_get_at(path: &Path) -> Result<Option<Vault>, CliError> {
+    let raw = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(io_err("vault read", e)),
+    };
+    Ok(serde_json::from_str::<Vault>(&raw).ok())
+}
+
+/// Persist `json` to `path` with `0600` permissions (unix) via a temp file +
+/// atomic rename, so the token is never momentarily world-readable.
+fn file_set_at(path: &Path, json: &str) -> Result<(), CliError> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| CliError::new("vault path has no parent", ErrorCode::AuthFailed))?;
+    fs::create_dir_all(dir).map_err(|e| io_err("vault mkdir", e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Best-effort tighten of the app's own config dir.
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+    }
+
+    let tmp = path.with_extension("json.tmp");
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(&tmp).map_err(|e| io_err("vault create", e))?;
+    f.write_all(json.as_bytes())
+        .map_err(|e| io_err("vault write", e))?;
+    f.sync_all().map_err(|e| io_err("vault sync", e))?;
+    drop(f);
+    fs::rename(&tmp, path).map_err(|e| io_err("vault rename", e))?;
+    Ok(())
+}
+
+/// Delete the file vault. Returns `Ok(true)` iff a file was removed.
+fn file_clear_at(path: &Path) -> Result<bool, CliError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(io_err("vault remove", e)),
     }
 }
 
@@ -438,6 +531,50 @@ mod tests {
     fn sanitize_credential_rejects_oversize() {
         let big = "a".repeat(4097);
         assert!(sanitize_credential(&big).is_err());
+    }
+
+    #[test]
+    fn file_vault_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.json");
+        assert!(file_get_at(&path).unwrap().is_none());
+
+        let json = serde_json::to_string(&vault()).unwrap();
+        file_set_at(&path, &json).unwrap();
+        assert_eq!(file_get_at(&path).unwrap(), Some(vault()));
+    }
+
+    #[test]
+    fn file_vault_malformed_yields_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.json");
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(file_get_at(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn file_vault_clear_semantics() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.json");
+        let json = serde_json::to_string(&vault()).unwrap();
+        file_set_at(&path, &json).unwrap();
+
+        assert!(file_clear_at(&path).unwrap());
+        assert!(!file_clear_at(&path).unwrap());
+        assert!(file_get_at(&path).unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_vault_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vault.json");
+        let json = serde_json::to_string(&vault()).unwrap();
+        file_set_at(&path, &json).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
