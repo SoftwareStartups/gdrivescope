@@ -63,7 +63,7 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 backon = "1"
 
 tempfile = "3"
-toml = "0.8"
+toml = "1.1"
 
 # macOS-only: keyring v3 doesn't expose an ACL parameter, so generic-
 # password entries it creates are scoped to the writing binary's codesign
