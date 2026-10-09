@@ -9,7 +9,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
-use rand::RngCore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -340,7 +339,7 @@ async fn write_response(
 
 fn random_token() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::fill(&mut bytes);
     base64_url(&bytes)
 }
 
