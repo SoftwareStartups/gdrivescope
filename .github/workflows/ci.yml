@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       # Toolchain is pinned via rust-toolchain.toml; the runner's pre-installed
       # rustup picks it up automatically. No third-party action needed (keeps
