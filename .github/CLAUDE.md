@@ -51,7 +51,8 @@ Applies to **every** `${{ }}` expression used inside a `run:` block — `github.
 ## Release Workflow (`workflows/release.yml`)
 
 - Triggers: push of `v*` tags
-- Permissions: `contents: write`, `actions: read`
+- Permissions: `contents: read` at the top level; only the `release` job gets `contents: write`
+- `actions/checkout` runs with `persist-credentials: false` (no step pushes with git; `gh release create` uses `GH_TOKEN`)
 - 5-platform binary matrix (Intel macOS dropped — `macos-13` runner pool has unbounded queue times and Apple no longer ships Intel Macs):
   - linux-x64 → `x86_64-unknown-linux-gnu`
   - linux-arm64 → `aarch64-unknown-linux-gnu`
