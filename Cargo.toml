@@ -21,7 +21,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util
 
 # SQLite + sqlite-vec. The `bundled` feature compiles SQLite from source so
 # we don't depend on a system libsqlite3 dylib at runtime.
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 sqlite-vec = "0.1"
 bytemuck = "1"
 dirs = "5"
