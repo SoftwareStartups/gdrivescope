@@ -52,7 +52,7 @@ kreuzberg = { version = "4", default-features = false, features = ["pdf", "pdf-o
 
 # Archive recursion: open zip envelopes (e.g. Docusign exports) and feed
 # each inner document back through the extractor. Pure Rust, no system deps.
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # LLM + embedding HTTP clients (~80 LOC each on top of the shared
 # `llm::http` helper). Hand-rolled because rig-core's builder/storage
